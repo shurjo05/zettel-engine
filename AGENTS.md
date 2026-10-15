@@ -1,0 +1,12 @@
+# zettel-engine: notes for AI agents
+
+Read README.md first. Then:
+
+- Commands: `uv sync`, `uv run pytest -q`, `uv run ruff check .`, `uv run ruff format .`
+- `notes.py` stays pure (no file access). `index.py` may only read the vault and write the
+  SQLite index. Only a future `vault.py` may write vault files.
+- Tests must use copies of `tests/fixtures/vault` (the `vault` fixture), never a real vault.
+- Fixture notes are synthetic; never commit personal vault content.
+- Record significant design choices in `docs/decisions.md` and any new place vault content goes
+  in `docs/data-flow.md`.
+- Keep dependencies minimal; justify any new one in `docs/decisions.md`.
