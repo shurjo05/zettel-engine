@@ -1,4 +1,4 @@
-"""Command-line interface: `zk index` and `zk check`.
+"""Command-line interface: `zk index`, `zk check`, `zk search`, `zk eval`.
 
 The CLI holds no logic of its own; it parses arguments, calls the library and
 prints the result. The MCP server (milestone 3) will be a second door into the
@@ -12,7 +12,9 @@ import json
 import sys
 from pathlib import Path
 
+from zk import evaluate
 from zk.index import DEFAULT_EXCLUDES, build_index, default_db_path, health_report, open_db
+from zk.search import search
 
 
 def _common(parser: argparse.ArgumentParser) -> None:
@@ -58,6 +60,44 @@ def cmd_check(args: argparse.Namespace) -> int:
     else:
         print(format_report(report, limit=args.limit))
     return 1 if report.errors else 0
+
+
+def cmd_search(args: argparse.Namespace) -> int:
+    conn = _open(args)
+    hits = search(conn, args.query, k=args.k, type=args.type, tag=args.tag)
+    conn.close()
+    if args.json:
+        print(json.dumps([h.to_dict() for h in hits], indent=2))
+        return 0
+    if not hits:
+        print("no matches")
+    for h in hits:
+        print(f"{h.rank:>2}. {h.title}  ({h.type or '-'}, score {h.score:.2f})")
+        print(f"    {h.path}")
+        if h.snippet:
+            print(f"    {h.snippet}")
+    return 0
+
+
+def cmd_eval(args: argparse.Namespace) -> int:
+    queries = evaluate.load_queries(args.queries)
+    conn = _open(args)
+    report = evaluate.run_eval(conn, queries, depth=10)
+    conn.close()
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "summary": report.summary(),
+                    "by_kind": {k: report.summary(k) for k in report.kinds()},
+                    "results": [r.__dict__ for r in report.results],
+                },
+                indent=2,
+            )
+        )
+    else:
+        print(evaluate.format_report(report))
+    return 0
 
 
 def format_report(report, limit: int = 20) -> str:
@@ -114,6 +154,21 @@ def main(argv: list[str] | None = None) -> int:
     p_check.add_argument("--json", action="store_true", help="machine-readable output")
     p_check.add_argument("--limit", type=int, default=20, help="rows per list, 0 for all")
     p_check.set_defaults(func=cmd_check)
+
+    p_search = sub.add_parser("search", help="keyword search (BM25) over the vault")
+    _common(p_search)
+    p_search.add_argument("query", help="free text; words are OR-ed and ranked by BM25")
+    p_search.add_argument("-k", type=int, default=5, help="number of results (default 5)")
+    p_search.add_argument("--type", help="only notes of this type")
+    p_search.add_argument("--tag", help="only notes with this tag")
+    p_search.add_argument("--json", action="store_true", help="machine-readable output")
+    p_search.set_defaults(func=cmd_search)
+
+    p_eval = sub.add_parser("eval", help="measure retrieval quality on a labelled query set")
+    _common(p_eval)
+    p_eval.add_argument("queries", type=Path, help="YAML query set (see zk/evaluate.py)")
+    p_eval.add_argument("--json", action="store_true", help="machine-readable output")
+    p_eval.set_defaults(func=cmd_eval)
 
     args = parser.parse_args(argv)
     return args.func(args)

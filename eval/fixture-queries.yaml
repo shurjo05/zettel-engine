@@ -1,0 +1,15 @@
+# Labelled queries for the synthetic fixture vault (tests/fixtures/vault).
+# `relevant` lists note file names (without .md) or frontmatter ids.
+queries:
+  - query: BM25 ranking
+    relevant: [bm25-ranking]
+    kind: keyword
+  - query: how do I merge two ranked lists
+    relevant: [reciprocal-rank-fusion]
+    kind: paraphrase
+  - query: cosine similarity of vectors
+    relevant: [embeddings]
+    kind: keyword
+  - query: length normalization saturation
+    relevant: [bm25-ranking]
+    kind: keyword
