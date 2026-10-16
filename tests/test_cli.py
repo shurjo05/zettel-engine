@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from zk.cli import main
 
 
@@ -54,3 +56,17 @@ def test_eval_command(vault, tmp_path, capsys):
     db = str(tmp_path / "i.sqlite")
     assert main(["eval", str(vault), queries, "--db", db, "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["summary"]["mrr"] == 1.0
+
+
+def test_show_command(vault, tmp_path, capsys):
+    db = str(tmp_path / "index.sqlite")
+    assert main(["show", str(vault), "--db", db, "20261015100100"]) == 0
+    out = capsys.readouterr().out
+    assert "Reciprocal Rank Fusion  (pattern" in out
+    assert "links to: BM25 Ranking, Embeddings" in out
+
+
+def test_show_unknown_note_exits_with_a_message(vault, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        main(["show", str(vault), "--db", str(tmp_path / "index.sqlite"), "fusion"])
+    assert "Closest matches" in str(exc.value.code)

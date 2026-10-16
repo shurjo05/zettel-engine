@@ -1,8 +1,8 @@
-"""Command-line interface: `zk index`, `zk check`, `zk search`, `zk eval`.
+"""Command-line interface: `zk index`, `zk check`, `zk search`, `zk show`, `zk eval`, `zk serve`.
 
 The CLI holds no logic of its own; it parses arguments, calls the library and
-prints the result. The MCP server (milestone 3) will be a second door into the
-same functions.
+prints the result. The MCP server (`zk serve`, zk/server.py) is a second door
+into the same functions.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import json
 import sys
 from pathlib import Path
 
-from zk import evaluate
+from zk import evaluate, lookup
 from zk.index import DEFAULT_EXCLUDES, build_index, default_db_path, health_report, open_db
 from zk.search import search
 
@@ -30,11 +30,15 @@ def _common(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _db(args: argparse.Namespace) -> Path:
+    if not args.vault.is_dir():
+        sys.exit(f"zk: {args.vault} is not a folder")
+    return args.db or default_db_path(args.vault)
+
+
 def _open(args: argparse.Namespace):
     vault: Path = args.vault
-    if not vault.is_dir():
-        sys.exit(f"zk: {vault} is not a folder")
-    db = args.db or default_db_path(vault)
+    db = _db(args)
     conn = open_db(db)
     stats = build_index(conn, vault, (*DEFAULT_EXCLUDES, *args.exclude))
     print(
@@ -76,6 +80,41 @@ def cmd_search(args: argparse.Namespace) -> int:
         print(f"    {h.path}")
         if h.snippet:
             print(f"    {h.snippet}")
+    return 0
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    conn = _open(args)
+    try:
+        note = lookup.get_note(conn, args.note)
+    except LookupError as exc:
+        sys.exit(f"zk: {exc}")
+    finally:
+        conn.close()
+    if args.json:
+        print(json.dumps(note, indent=2))
+        return 0
+    print(f"{note['title']}  ({note['type'] or '-'}, id {note['id'] or '-'})")
+    print(f"path: {note['path']}")
+    if note["tags"]:
+        print(f"tags: {', '.join(note['tags'])}")
+    print(f"links to: {', '.join(n['title'] for n in note['links_out']) or '-'}")
+    print(f"linked from: {', '.join(n['title'] for n in note['links_in']) or '-'}")
+    if note["broken_links"]:
+        print(f"broken links: {', '.join(note['broken_links'])}")
+    print()
+    print(note["body"].rstrip())
+    if note["truncated"]:
+        print("... (truncated)")
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    from zk.server import create_server  # imported here so other commands start fast
+
+    db = _db(args)
+    print(f"zk: serving {args.vault.resolve()} over stdio (read-only), index {db}", file=sys.stderr)
+    create_server(args.vault, db, (*DEFAULT_EXCLUDES, *args.exclude)).run("stdio")
     return 0
 
 
@@ -164,11 +203,21 @@ def main(argv: list[str] | None = None) -> int:
     p_search.add_argument("--json", action="store_true", help="machine-readable output")
     p_search.set_defaults(func=cmd_search)
 
+    p_show = sub.add_parser("show", help="print one note with its links (what get_note returns)")
+    _common(p_show)
+    p_show.add_argument("note", help="id, file name, vault path or title")
+    p_show.add_argument("--json", action="store_true", help="machine-readable output")
+    p_show.set_defaults(func=cmd_show)
+
     p_eval = sub.add_parser("eval", help="measure retrieval quality on a labelled query set")
     _common(p_eval)
     p_eval.add_argument("queries", type=Path, help="YAML query set (see zk/evaluate.py)")
     p_eval.add_argument("--json", action="store_true", help="machine-readable output")
     p_eval.set_defaults(func=cmd_eval)
+
+    p_serve = sub.add_parser("serve", help="run the read-only MCP server over stdio")
+    _common(p_serve)
+    p_serve.set_defaults(func=cmd_serve)
 
     args = parser.parse_args(argv)
     return args.func(args)

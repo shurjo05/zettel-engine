@@ -96,3 +96,19 @@ def test_switching_vaults_resets_the_index(vault, tmp_path):
     stats = build_index(conn, empty)
     assert stats.total == 0
     assert health_report(conn).notes == 0
+
+
+def test_links_are_re_resolved_when_a_target_appears_or_disappears(vault, tmp_path):
+    conn = open_db(tmp_path / "index.sqlite")
+    build_index(conn, vault)
+
+    def status(target: str) -> str:
+        return conn.execute("SELECT status FROM links WHERE target = ?", (target,)).fetchone()[0]
+
+    assert status("hnsw-index") == "broken"
+    (vault / "notes" / "hnsw-index.md").write_text("# HNSW Index\n", encoding="utf-8")
+    build_index(conn, vault)
+    assert status("hnsw-index") == "resolved"
+    (vault / "notes" / "hnsw-index.md").unlink()
+    build_index(conn, vault)
+    assert status("hnsw-index") == "broken"
