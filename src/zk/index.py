@@ -17,7 +17,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from zk.notes import Note, parse_note, validate
+from zk.notes import Note, content_hash, parse_note, validate
 
 SCHEMA_VERSION = "2"
 
@@ -169,26 +169,27 @@ def build_index(
     seen: set[str] = set()
 
     with conn:
-        conn.execute("INSERT OR REPLACE INTO meta VALUES ('vault', ?)", (str(vault),))
+        if stored_root is None or stored_root["value"] != str(vault):
+            conn.execute("INSERT OR REPLACE INTO meta VALUES ('vault', ?)", (str(vault),))
         for file in iter_note_files(vault, excludes):
             rel = file.relative_to(vault).as_posix()
             seen.add(rel)
             data = file.read_bytes()
-            note = parse_note(rel, data)
-            if known.get(rel) == note.content_hash:
-                stats.unchanged += 1
+            if known.get(rel) == content_hash(data):
+                stats.unchanged += 1  # hashing is cheap; parsing is skipped
                 continue
             if rel in known:
                 stats.updated += 1
             else:
                 stats.added += 1
-            _store(conn, note)
+            _store(conn, parse_note(rel, data))
 
         for rel in known.keys() - seen:
             _delete(conn, rel)
             stats.removed += 1
 
-        _resolve_links(conn)
+        if stats.added or stats.updated or stats.removed:
+            _resolve_links(conn)
     return stats
 
 

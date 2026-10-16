@@ -13,7 +13,7 @@ rebuildable index stored outside the vault.
 | M0 | Repo skeleton, tests, CI | done |
 | M1 | Note catalog and `zk check` health report | done |
 | M2 | Keyword search (SQLite FTS5, BM25) and evaluation harness | done |
-| M3 | Read-only MCP server | next |
+| M3 | Read-only MCP server (`zk serve`) | done |
 | M4-M9 | Embeddings, hybrid search, ingestion, maintenance, evaluation | planned |
 
 ## Setup
@@ -33,7 +33,9 @@ uv run zk check path/to/vault --json   # the same report as JSON
 uv run zk index path/to/vault          # just build or refresh the index
 uv run zk search path/to/vault "how do I merge ranked lists"   # BM25 keyword search
 uv run zk search path/to/vault "hooks" --type pattern --tag claude-code -k 10
+uv run zk show path/to/vault reciprocal-rank-fusion             # one note with its links
 uv run zk eval path/to/vault eval/fixture-queries.yaml         # Recall@k, MRR, latency
+uv run zk serve path/to/vault                                  # MCP server over stdio
 ```
 
 Every command refreshes the index first (only changed files are re-parsed), so results are never
@@ -43,6 +45,37 @@ stale.
 
 Words in the query are matched with Porter stemming ("merging" finds "merges") and combined with
 OR, then ranked by BM25. Matches in the title count most, then aliases, tags, summary and body.
+
+### MCP server
+
+`zk serve` lets Claude Code and Codex search the vault while you work. It runs over stdio (the client
+starts it; no network port) and offers three read-only tools:
+
+| Tool | Returns |
+| --- | --- |
+| `search_notes(query, k, type, tag)` | ranked hits with summary and snippet, no bodies |
+| `get_note(note)` | one note in full, with the notes it links to and from |
+| `get_related(note, k)` | linked, backlinking and same-tag notes, with summaries |
+
+A note can be named by id, file name, vault path or title. Each call refreshes the index first, so
+edits made in Obsidian are visible on the next call. `zk show` prints what `get_note` returns.
+
+Claude Code (Windows paths shown; `--scope user` makes it available in every project):
+
+```bash
+claude mcp add zk --scope user -- uv --directory C:\path\to\zettel-engine run zk serve C:\path\to\vault
+```
+
+Codex, in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.zk]
+command = "uv"
+args = ["--directory", "C:\\path\\to\\zettel-engine", "run", "zk", "serve", "C:\\path\\to\\vault"]
+```
+
+Whatever a tool returns becomes part of the conversation and is sent to the client's model
+provider; see [docs/data-flow.md](docs/data-flow.md).
 
 ### Evaluation
 
@@ -101,9 +134,11 @@ sections), so an old vault can be checked without rewriting it.
 src/zk/notes.py   parse and validate one note (pure, no file access)
 src/zk/index.py   SQLite catalog: notes, links, issues, full-text index; incremental builds
 src/zk/search.py  keyword search with BM25 ranking and filters
+src/zk/lookup.py  one note, or its neighbours, by id, file name, path or title
 src/zk/evaluate.py  retrieval metrics over a labelled query set
-eval/             query sets for the fixture vault
+src/zk/server.py  MCP server: the same functions as read-only tools
 src/zk/cli.py     the `zk` command
+eval/             query sets for the fixture vault
 tests/            pytest suite and a small synthetic fixture vault
 docs/             decisions and data flow
 ```
