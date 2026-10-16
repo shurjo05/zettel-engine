@@ -12,8 +12,8 @@ rebuildable index stored outside the vault.
 | --- | --- | --- |
 | M0 | Repo skeleton, tests, CI | done |
 | M1 | Note catalog and `zk check` health report | done |
-| M2 | Keyword search (SQLite FTS5, BM25) and evaluation set | next |
-| M3 | Read-only MCP server | planned |
+| M2 | Keyword search (SQLite FTS5, BM25) and evaluation harness | done |
+| M3 | Read-only MCP server | next |
 | M4-M9 | Embeddings, hybrid search, ingestion, maintenance, evaluation | planned |
 
 ## Setup
@@ -31,7 +31,32 @@ uv run pytest
 uv run zk check path/to/vault          # index the vault, then print a health report
 uv run zk check path/to/vault --json   # the same report as JSON
 uv run zk index path/to/vault          # just build or refresh the index
+uv run zk search path/to/vault "how do I merge ranked lists"   # BM25 keyword search
+uv run zk search path/to/vault "hooks" --type pattern --tag claude-code -k 10
+uv run zk eval path/to/vault eval/fixture-queries.yaml         # Recall@k, MRR, latency
 ```
+
+Every command refreshes the index first (only changed files are re-parsed), so results are never
+stale.
+
+### Search
+
+Words in the query are matched with Porter stemming ("merging" finds "merges") and combined with
+OR, then ranked by BM25. Matches in the title count most, then aliases, tags, summary and body.
+
+### Evaluation
+
+A query set is a YAML file of queries with the notes that should be found for each:
+
+```yaml
+queries:
+  - query: how do I merge two ranked lists
+    relevant: [reciprocal-rank-fusion]   # note file names or frontmatter ids
+    kind: paraphrase                      # optional; results are also broken down by kind
+```
+
+`zk eval` reports Recall@1/3/5/10, MRR and latency overall and per kind, and lists the queries whose
+relevant note was not in the top 10. Keep query sets about private vaults out of this repository.
 
 `zk` only reads the vault. It skips hidden folders (`.obsidian`, `.git`) plus `inbox/**` and
 `templates/**`; add more with `--exclude GLOB` (repeatable, vault-relative, `*` also matches `/`).
@@ -74,7 +99,10 @@ sections), so an old vault can be checked without rewriting it.
 
 ```
 src/zk/notes.py   parse and validate one note (pure, no file access)
-src/zk/index.py   SQLite catalog: notes, links, issues; incremental builds; health report
+src/zk/index.py   SQLite catalog: notes, links, issues, full-text index; incremental builds
+src/zk/search.py  keyword search with BM25 ranking and filters
+src/zk/evaluate.py  retrieval metrics over a labelled query set
+eval/             query sets for the fixture vault
 src/zk/cli.py     the `zk` command
 tests/            pytest suite and a small synthetic fixture vault
 docs/             decisions and data flow

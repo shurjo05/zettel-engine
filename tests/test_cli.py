@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from zk.cli import main
 
@@ -37,3 +38,19 @@ def test_check_passes_on_a_clean_vault(tmp_path, capsys):
         encoding="utf-8",
     )
     assert main(["check", str(clean), "--db", str(tmp_path / "i.sqlite")]) == 0
+
+
+def test_search_command(vault, tmp_path, capsys):
+    db = str(tmp_path / "i.sqlite")
+    assert main(["search", str(vault), "rank fusion", "--db", db]) == 0
+    assert "1. Reciprocal Rank Fusion" in capsys.readouterr().out
+    main(["search", str(vault), "rank fusion", "--db", db, "--json", "-k", "1"])
+    hits = json.loads(capsys.readouterr().out)
+    assert [h["path"] for h in hits] == ["notes/reciprocal-rank-fusion.md"]
+
+
+def test_eval_command(vault, tmp_path, capsys):
+    queries = str(Path(__file__).parent.parent / "eval" / "fixture-queries.yaml")
+    db = str(tmp_path / "i.sqlite")
+    assert main(["eval", str(vault), queries, "--db", db, "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["summary"]["mrr"] == 1.0

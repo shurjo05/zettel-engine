@@ -36,3 +36,20 @@ renames. Two notes with the same file name make a link ambiguous; it is reported
 
 PyYAML `safe_load` replaces the regex parser, so quoted values are valid. Fields the new schema
 dropped (`domain`, `status`, `confidence`) are kept in the stored frontmatter but ignored.
+
+## 7. Keyword search with SQLite FTS5 and BM25 (2026-10-15)
+
+FTS5 lives in the same index file, ranks with BM25, and supports per-column weights and Porter
+stemming. A hand-written inverted index would teach the same ideas but duplicate a correct, fast
+implementation. Queries quote every word and join them with OR: quoting neutralises FTS5 syntax in
+user input, and OR keeps natural-language questions from returning nothing.
+
+Column weights are title 10, aliases 8, tags 5, summary 3, body 1. On the 30-query legacy eval set
+they improved MRR only from 0.80 (equal weights) to 0.82, which is one query's difference; they stay
+because they never hurt, and the eval set will judge them again as it grows.
+
+## 8. Evaluation from the start, with private query sets kept out of the repo (2026-10-15)
+
+`zk eval` measures Recall@k, MRR and latency on a labelled query set so each later change (embeddings,
+hybrid ranking, link expansion) is judged against a recorded baseline instead of impressions. The
+repository holds only the fixture query set; sets that name private notes live with the vault.

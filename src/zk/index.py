@@ -19,7 +19,7 @@ from pathlib import Path
 
 from zk.notes import Note, parse_note, validate
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 
 # Raw captures and templates live in the vault but are not atomic notes.
 DEFAULT_EXCLUDES = ("inbox/**", "templates/**")
@@ -62,6 +62,13 @@ CREATE TABLE issues (
     message TEXT NOT NULL
 );
 CREATE INDEX issues_path ON issues(path);
+
+-- Full-text index for keyword search (BM25). Porter stemming makes
+-- "deduplicate" match "deduplication". path is stored, not searched.
+CREATE VIRTUAL TABLE notes_fts USING fts5(
+    path UNINDEXED, title, aliases, tags, summary, body,
+    tokenize = 'porter unicode61 remove_diacritics 2'
+);
 """
 
 
@@ -115,11 +122,17 @@ def open_db(db_path: Path | str) -> sqlite3.Connection:
 
 def _reset(conn: sqlite3.Connection) -> None:
     """Drop everything and recreate the schema. Safe because the index is derived."""
-    tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
     with conn:
         conn.execute("PRAGMA foreign_keys = OFF")
-        for table in tables:
-            conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+        # Virtual tables first: dropping one also drops its shadow tables.
+        for (name,) in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND sql LIKE 'CREATE VIRTUAL%'"
+        ).fetchall():
+            conn.execute(f'DROP TABLE IF EXISTS "{name}"')
+        for (name,) in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall():
+            conn.execute(f'DROP TABLE IF EXISTS "{name}"')
         conn.executescript(_SCHEMA)
         conn.execute("INSERT INTO meta VALUES ('schema_version', ?)", (SCHEMA_VERSION,))
         conn.execute("PRAGMA foreign_keys = ON")
@@ -172,16 +185,25 @@ def build_index(
             _store(conn, note)
 
         for rel in known.keys() - seen:
-            conn.execute("DELETE FROM notes WHERE path = ?", (rel,))
+            _delete(conn, rel)
             stats.removed += 1
 
         _resolve_links(conn)
     return stats
 
 
+def _delete(conn: sqlite3.Connection, path: str) -> None:
+    # notes_fts shares rowids with notes. Virtual tables don't take part in
+    # foreign-key cascades, so its row is removed by hand, by rowid (fast).
+    row = conn.execute("SELECT rowid FROM notes WHERE path = ?", (path,)).fetchone()
+    if row is not None:
+        conn.execute("DELETE FROM notes_fts WHERE rowid = ?", (row[0],))
+    conn.execute("DELETE FROM notes WHERE path = ?", (path,))  # cascades to links, issues
+
+
 def _store(conn: sqlite3.Connection, note: Note) -> None:
-    conn.execute("DELETE FROM notes WHERE path = ?", (note.path,))  # cascades to links, issues
-    conn.execute(
+    _delete(conn, note.path)
+    cursor = conn.execute(
         "INSERT INTO notes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             note.path,
@@ -196,6 +218,19 @@ def _store(conn: sqlite3.Connection, note: Note) -> None:
             note.updated,
             note.content_hash,
             None if note.frontmatter is None else json.dumps(note.frontmatter),
+            note.body,
+        ),
+    )
+    conn.execute(
+        "INSERT INTO notes_fts (rowid, path, title, aliases, tags, summary, body) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            cursor.lastrowid,
+            note.path,
+            note.title,
+            " ".join(note.aliases),
+            " ".join(note.tags),
+            note.summary,
             note.body,
         ),
     )
