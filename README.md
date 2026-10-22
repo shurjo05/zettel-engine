@@ -15,7 +15,7 @@ rebuildable index stored outside the vault.
 | M2 | Keyword search (SQLite FTS5, BM25) and evaluation harness | done |
 | M3 | Read-only MCP server (`zk serve`) | done |
 | M4 | Semantic search with local embeddings | done |
-| M5 | Hybrid search (reciprocal rank fusion) | in progress |
+| M5 | Hybrid search (reciprocal rank fusion), the default mode | in progress |
 | M6-M9 | Ingestion, maintenance, evaluation | planned |
 
 ## Setup
@@ -33,7 +33,7 @@ uv run pytest
 uv run zk check path/to/vault          # index the vault, then print a health report
 uv run zk check path/to/vault --json   # the same report as JSON
 uv run zk index path/to/vault          # just build or refresh the index
-uv run zk search path/to/vault "how do I merge ranked lists"   # BM25 keyword search
+uv run zk search path/to/vault "how do I merge ranked lists"   # hybrid search (the default)
 uv run zk search path/to/vault "hooks" --type pattern --tag claude-code -k 10
 uv run zk search path/to/vault "older knowledge should count less" --mode semantic
 uv run zk search path/to/vault "mergeable priority queue" --mode hybrid
@@ -62,8 +62,9 @@ content hash, so only new or edited notes are embedded and renamed notes keep th
 
 ### Hybrid search
 
-`--mode hybrid` runs both searches and fuses their rankings with reciprocal rank fusion: each note
-scores the sum of 1 / (60 + rank) over the lists it appears in. Ranks are combined rather than
+Hybrid is the default mode. It runs both searches and fuses their rankings with reciprocal rank
+fusion: each note scores the sum of 1 / (10 + rank) over the lists it appears in. Use `--mode keyword`
+for a fast search that loads no model. Ranks are combined rather than
 scores because BM25 scores and cosine similarities are on different scales.
 
 ### MCP server

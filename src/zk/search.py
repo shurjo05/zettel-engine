@@ -27,9 +27,15 @@ _WORD = re.compile(r"\w+", re.UNICODE)
 MODES = ("keyword", "semantic", "hybrid")
 
 # Reciprocal rank fusion: a note scores sum(1 / (RRF_K + rank)) over the lists
-# it appears in. 60 is the constant from Cormack et al. (2009); it keeps one
-# list's top ranks from drowning out agreement between the lists.
-RRF_K = 60
+# it appears in. The literature's usual 60 (Cormack et al., 2009) flattens rank
+# differences; on our eval set a smaller constant, which trusts each list's top
+# ranks more, did better (MRR 0.90 vs 0.87), because keyword search returns many
+# weak OR-matches for paraphrased questions. See docs/decisions.md (13).
+RRF_K = 10
+
+# What agents and `zk search` use unless told otherwise: on the eval set, the
+# only mode that gets every query's note into the top 5.
+DEFAULT_MODE = "hybrid"
 # How deep each list is read before fusing. Deeper than k, so a note ranked
 # modestly by both lists can still beat one ranked high by only one.
 FUSION_DEPTH = 50

@@ -21,7 +21,7 @@ from mcp.types import ToolAnnotations
 from zk import lookup
 from zk.embed import Embedder, update_embeddings
 from zk.index import build_index, open_db
-from zk.search import MODES, search
+from zk.search import DEFAULT_MODE, MODES, search
 
 INSTRUCTIONS = """\
 Tools for a personal Zettelkasten: short Markdown notes, one idea each, linked to each other.
@@ -66,17 +66,19 @@ def create_server(
         k: int = 5,
         type: str | None = None,
         tag: str | None = None,
-        mode: str = "keyword",
+        mode: str | None = None,
     ) -> str:
         """Search the notes. Returns up to k hits, best first, without bodies.
 
-        mode "keyword" (default) ranks by BM25 over stemmed words and adds a short snippet with
-        [matched words]; use it for names, identifiers and exact terms. mode "semantic" ranks by
-        meaning (local embeddings, cosine similarity); use it when the question is phrased in
-        different words than the notes. mode "hybrid" fuses both rankings and is a good choice
-        when unsure. Each hit has id, path, title, type, summary and score.
+        mode "hybrid" (default) fuses keyword and semantic rankings and suits most questions.
+        mode "keyword" ranks by BM25 over stemmed words; use it for names, identifiers and exact
+        terms. mode "semantic" ranks by meaning only (local embeddings, cosine similarity).
+        Each hit has id, path, title, type, summary and score, and a short snippet with
+        [matched words] when keyword search matched.
         Optional filters: type (concept, pattern, problem, decision) and tag.
         """
+        if mode is None:
+            mode = DEFAULT_MODE if embedder is not None else "keyword"
         if mode not in MODES:
             raise ToolError(f"mode must be one of: {', '.join(MODES)}")
         if mode != "keyword" and embedder is None:

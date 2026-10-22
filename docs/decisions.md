@@ -116,7 +116,19 @@ exact-term queries that keyword search ranked first ("mergeable priority queue" 
 10). `--mode hybrid` reads the top 50 of each list and scores each note by the sum of
 1 / (60 + rank) over the lists it appears in.
 
+Measured on the legacy set (keyword / semantic / hybrid MRR 0.82 / 0.92 / 0.90), hybrid search is
+the only mode with every query's note in the top 5 (R@5 1.00 vs 0.97 for semantic), at the cost of
+some first-place hits: semantic's rank-1 paraphrase wins drop to ranks 1 to 3. Agents read the top
+five summaries, so recall in the top 5 matters more than rank 1, and hybrid is the default for
+`search_notes` and `zk search`.
+
+The constant is 10, not the usual 60. For a paraphrased question keyword search still returns 40 to
+50 weak OR-matches, and with k = 60 those flat ranks let mediocre-in-both notes outscore semantic's
+#1; k = 10 trusts each list's top ranks more (MRR 0.90 vs 0.87; depth 50 beats 20 at either k).
+This was chosen on the same 30 queries it is judged on, so it may be overfit: re-check it when the
+eval set grows.
+
 RRF uses ranks, not scores, because BM25 scores are unbounded and depend on the query's words
 while cosine similarities sit in [-1, 1]; normalising and weighting them would add a tuning knob
-per scale. RRF has one constant, the standard 60, and needs no training data, which matters with a
+per scale. RRF has one constant and needs no training data, which matters with a
 30-query eval set that would overfit any learned weights.

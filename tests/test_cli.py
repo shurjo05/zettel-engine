@@ -3,7 +3,6 @@ from pathlib import Path
 
 import pytest
 
-from zk import cli
 from zk.cli import main
 
 
@@ -73,14 +72,7 @@ def test_show_unknown_note_exits_with_a_message(vault, tmp_path):
     assert "Closest matches" in str(exc.value.code)
 
 
-@pytest.fixture
-def stand_in_model(monkeypatch):
-    from conftest import WordEmbedder
-
-    monkeypatch.setattr(cli, "make_embedder", lambda model: WordEmbedder(model))
-
-
-def test_semantic_search_command(vault, tmp_path, capsys, stand_in_model):
+def test_semantic_search_command(vault, tmp_path, capsys):
     db = str(tmp_path / "index.sqlite")
     assert (
         main(["search", str(vault), "--db", db, "--mode", "semantic", "merging ranked lists"]) == 0
@@ -93,7 +85,7 @@ def test_semantic_search_command(vault, tmp_path, capsys, stand_in_model):
     assert "0 new, 10 reused" in capsys.readouterr().err
 
 
-def test_eval_compares_modes(vault, tmp_path, capsys, stand_in_model):
+def test_eval_compares_modes(vault, tmp_path, capsys):
     queries = str(Path(__file__).parents[1] / "eval" / "fixture-queries.yaml")
     args = ["eval", str(vault), queries, "--db", str(tmp_path / "i.sqlite")]
     assert main([*args, "--mode", "keyword", "--mode", "semantic"]) == 0

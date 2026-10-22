@@ -52,3 +52,11 @@ class WordEmbedder:
 @pytest.fixture
 def embedder() -> WordEmbedder:
     return WordEmbedder()
+
+
+@pytest.fixture(autouse=True)
+def no_model_downloads(monkeypatch):
+    """The CLI's default (hybrid) search needs an embedder; tests never fetch a real model."""
+    from zk import cli
+
+    monkeypatch.setattr(cli, "make_embedder", lambda model: WordEmbedder(model))

@@ -15,7 +15,7 @@ from pathlib import Path
 from zk import evaluate, lookup
 from zk.embed import DEFAULT_MODEL, FastEmbedder, update_embeddings
 from zk.index import DEFAULT_EXCLUDES, build_index, default_db_path, health_report, open_db
-from zk.search import MODES, search
+from zk.search import DEFAULT_MODE, MODES, search
 
 # Builds the embedder for --model; tests swap in a stand-in that needs no download.
 make_embedder = FastEmbedder
@@ -149,7 +149,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 def cmd_eval(args: argparse.Namespace) -> int:
     queries = evaluate.load_queries(args.queries)
-    modes = list(dict.fromkeys(args.mode or ["keyword"]))
+    modes = list(dict.fromkeys(args.mode or [DEFAULT_MODE]))
     conn = _open(args)
     embedder = _embedder(args, conn) if set(modes) - {"keyword"} else None
     reports = {
@@ -231,7 +231,9 @@ def main(argv: list[str] | None = None) -> int:
     p_search = sub.add_parser("search", help="keyword (BM25) or semantic search over the vault")
     _common(p_search)
     p_search.add_argument("query", help="free text")
-    p_search.add_argument("--mode", choices=MODES, default="keyword", help="default keyword")
+    p_search.add_argument(
+        "--mode", choices=MODES, default=DEFAULT_MODE, help=f"default {DEFAULT_MODE}"
+    )
     _model_option(p_search)
     p_search.add_argument("-k", type=int, default=5, help="number of results (default 5)")
     p_search.add_argument("--type", help="only notes of this type")
