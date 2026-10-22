@@ -21,9 +21,11 @@ PROPOSALS_DIR = "inbox/proposals"
 NOTES_DIR = "notes"
 
 # Cosine similarity between a proposal and an existing note (bge-small, unit
-# vectors). Starting values; calibrated against real near-duplicate pairs.
-DUPLICATE_AT = 0.90
-RELATED_AT = 0.75
+# vectors). bge-small scores run high: a typical note's nearest neighbour sits
+# near 0.80, reworded duplicates scored 0.78-0.94 and same-topic notes 0.62-0.81,
+# so the cut favours flagging duplicates; a person reviews every proposal anyway.
+DUPLICATE_AT = 0.85
+RELATED_AT = 0.80
 
 
 class InvalidProposal(ValueError):

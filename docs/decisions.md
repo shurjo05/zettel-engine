@@ -159,5 +159,15 @@ it only after the person approves; the person can also read and edit proposals i
 Applying commits exactly the files it touched (`git commit --only`), so a note can be reverted on its
 own and changes the person has not committed are never swept in. Editing existing notes is left out
 for now: every tool creates or moves files, which keeps the worst case of a confused agent to an
-unwanted new file. The duplicate verdict thresholds (cosine 0.90 likely duplicate, 0.75 related)
-are starting values to be calibrated on real notes.
+unwanted new file.
+
+The duplicate verdict thresholds are cosine 0.85 for likely duplicate and 0.80 for related,
+calibrated on the legacy notes. bge-small similarities run high: the median note's nearest
+neighbour is 0.80, and 143 pairs score at least 0.75, so the starting values (0.90 and 0.75) would
+call almost every note related while missing most duplicates. Ten hand-reworded copies of real
+notes scored 0.78 to 0.94 (median 0.86) and ranked their original first every time; ten pairs that
+only share a topic scored 0.62 to 0.81. The ranges overlap, so no cut is clean. At 0.85 / 0.80, 7 of
+the 10 copies are flagged and the other 3 show as related at rank 1, while no topic pair is flagged.
+Recall wins because a person reviews every proposal and a wrong flag costs one look. The gap between
+the top hit and the second looked like a useful extra signal (at least 0.08 for 9 of 10 copies)
+but is untested on false positives, so it is left out.
