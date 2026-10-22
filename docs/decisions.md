@@ -108,3 +108,15 @@ fastembed runs ONNX models with onnxruntime and brings tokenizers, huggingface-h
 The alternative, sentence-transformers, needs PyTorch, roughly ten times the install, for the same
 models. fastembed is imported only when something is embedded, so commands that don't embed start
 as fast as before.
+
+## 13. Hybrid search by reciprocal rank fusion (2026-10-22)
+
+On the legacy eval set semantic search beat keyword search overall (MRR 0.92 vs 0.82) but lost
+exact-term queries that keyword search ranked first ("mergeable priority queue" fell out of the top
+10). `--mode hybrid` reads the top 50 of each list and scores each note by the sum of
+1 / (60 + rank) over the lists it appears in.
+
+RRF uses ranks, not scores, because BM25 scores are unbounded and depend on the query's words
+while cosine similarities sit in [-1, 1]; normalising and weighting them would add a tuning knob
+per scale. RRF has one constant, the standard 60, and needs no training data, which matters with a
+30-query eval set that would overfit any learned weights.

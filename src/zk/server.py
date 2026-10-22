@@ -73,20 +73,21 @@ def create_server(
         mode "keyword" (default) ranks by BM25 over stemmed words and adds a short snippet with
         [matched words]; use it for names, identifiers and exact terms. mode "semantic" ranks by
         meaning (local embeddings, cosine similarity); use it when the question is phrased in
-        different words than the notes. Each hit has id, path, title, type, summary and score.
+        different words than the notes. mode "hybrid" fuses both rankings and is a good choice
+        when unsure. Each hit has id, path, title, type, summary and score.
         Optional filters: type (concept, pattern, problem, decision) and tag.
         """
         if mode not in MODES:
             raise ToolError(f"mode must be one of: {', '.join(MODES)}")
-        if mode == "semantic" and embedder is None:
-            raise ToolError("semantic search is not enabled on this server")
+        if mode != "keyword" and embedder is None:
+            raise ToolError(f"{mode} search is not enabled on this server")
         k = max(1, min(k, 25))
         return run(
             lambda c: [
                 h.to_dict()
                 for h in search(c, query, k=k, type=type, tag=tag, mode=mode, embedder=embedder)
             ],
-            embed=mode == "semantic",
+            embed=mode != "keyword",
         )
 
     @server.tool(annotations=READ_ONLY, structured_output=False)

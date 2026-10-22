@@ -93,7 +93,7 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 def cmd_search(args: argparse.Namespace) -> int:
     conn = _open(args)
-    embedder = _embedder(args, conn) if args.mode == "semantic" else None
+    embedder = _embedder(args, conn) if args.mode != "keyword" else None
     hits = search(
         conn, args.query, k=args.k, type=args.type, tag=args.tag, mode=args.mode, embedder=embedder
     )
@@ -151,7 +151,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
     queries = evaluate.load_queries(args.queries)
     modes = list(dict.fromkeys(args.mode or ["keyword"]))
     conn = _open(args)
-    embedder = _embedder(args, conn) if "semantic" in modes else None
+    embedder = _embedder(args, conn) if set(modes) - {"keyword"} else None
     reports = {
         m: evaluate.run_eval(conn, queries, depth=10, mode=m, embedder=embedder) for m in modes
     }
