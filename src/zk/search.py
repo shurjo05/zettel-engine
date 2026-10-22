@@ -1,4 +1,4 @@
-"""Search over the index: keyword (BM25 via SQLite FTS5) or semantic (embeddings).
+"""Search over the index: keyword (BM25 via SQLite FTS5), semantic (embeddings), or both fused.
 
 Search only reads the index. Build or refresh it first with `index.build_index`,
 and for semantic search `embed.update_embeddings`.
@@ -24,7 +24,21 @@ COLUMN_WEIGHTS = (0.0, 10.0, 8.0, 5.0, 3.0, 1.0)
 
 _WORD = re.compile(r"\w+", re.UNICODE)
 
-MODES = ("keyword", "semantic")
+MODES = ("keyword", "semantic", "hybrid")
+
+# Reciprocal rank fusion: a note scores sum(1 / (RRF_K + rank)) over the lists
+# it appears in. The literature's usual 60 (Cormack et al., 2009) flattens rank
+# differences; on our eval set a smaller constant, which trusts each list's top
+# ranks more, did better (MRR 0.90 vs 0.87), because keyword search returns many
+# weak OR-matches for paraphrased questions. See docs/decisions.md (13).
+RRF_K = 10
+
+# What agents and `zk search` use unless told otherwise: on the eval set, the
+# only mode that gets every query's note into the top 5.
+DEFAULT_MODE = "hybrid"
+# How deep each list is read before fusing. Deeper than k, so a note ranked
+# modestly by both lists can still beat one ranked high by only one.
+FUSION_DEPTH = 50
 
 
 @dataclass
@@ -77,9 +91,11 @@ def search(
     embedder: Embedder | None = None,
 ) -> list[Hit]:
     """Return the top `k` notes for `query`, best first."""
-    if mode == "semantic":
+    if mode in ("semantic", "hybrid"):
         if embedder is None:
-            raise ValueError("semantic search needs an embedder")
+            raise ValueError(f"{mode} search needs an embedder")
+        if mode == "hybrid":
+            return hybrid_search(conn, embedder, query, k=k, type=type, tag=tag)
         return semantic_search(conn, embedder, query, k=k, type=type, tag=tag)
     if mode != "keyword":
         raise ValueError(f"unknown search mode {mode!r}; expected one of {', '.join(MODES)}")
@@ -166,4 +182,39 @@ def semantic_search(
             snippet="",
         )
         for rank, i in enumerate(order, start=1)
+    ]
+
+
+def hybrid_search(
+    conn: sqlite3.Connection,
+    embedder: Embedder,
+    query: str,
+    k: int = 5,
+    type: str | None = None,
+    tag: str | None = None,
+) -> list[Hit]:
+    """Keyword and semantic results fused with reciprocal rank fusion.
+
+    BM25 scores and cosine similarities are on different scales, so they are not
+    added; only ranks are. A note found by both lists rises; a note only one list
+    finds still counts. The keyword snippet is kept when there is one.
+    """
+    if k <= 0:
+        return []
+    depth = max(k, FUSION_DEPTH)
+    lists = [
+        keyword_search(conn, query, k=depth, type=type, tag=tag),
+        semantic_search(conn, embedder, query, k=depth, type=type, tag=tag),
+    ]
+    fused: dict[str, float] = {}
+    best: dict[str, Hit] = {}
+    for hits in lists:
+        for hit in hits:
+            fused[hit.path] = fused.get(hit.path, 0.0) + 1 / (RRF_K + hit.rank)
+            if hit.path not in best or (hit.snippet and not best[hit.path].snippet):
+                best[hit.path] = hit
+    order = sorted(fused, key=lambda path: (-fused[path], path))[:k]
+    return [
+        Hit(**{**asdict(best[path]), "rank": rank, "score": round(fused[path], 6)})
+        for rank, path in enumerate(order, start=1)
     ]

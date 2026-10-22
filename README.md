@@ -14,8 +14,9 @@ rebuildable index stored outside the vault.
 | M1 | Note catalog and `zk check` health report | done |
 | M2 | Keyword search (SQLite FTS5, BM25) and evaluation harness | done |
 | M3 | Read-only MCP server (`zk serve`) | done |
-| M4 | Semantic search with local embeddings | in progress |
-| M5-M9 | Hybrid search, ingestion, maintenance, evaluation | planned |
+| M4 | Semantic search with local embeddings | done |
+| M5 | Hybrid search (reciprocal rank fusion), the default mode | in progress |
+| M6-M9 | Ingestion, maintenance, evaluation | planned |
 
 ## Setup
 
@@ -32,9 +33,10 @@ uv run pytest
 uv run zk check path/to/vault          # index the vault, then print a health report
 uv run zk check path/to/vault --json   # the same report as JSON
 uv run zk index path/to/vault          # just build or refresh the index
-uv run zk search path/to/vault "how do I merge ranked lists"   # BM25 keyword search
+uv run zk search path/to/vault "how do I merge ranked lists"   # hybrid search (the default)
 uv run zk search path/to/vault "hooks" --type pattern --tag claude-code -k 10
 uv run zk search path/to/vault "older knowledge should count less" --mode semantic
+uv run zk search path/to/vault "mergeable priority queue" --mode hybrid
 uv run zk show path/to/vault reciprocal-rank-fusion             # one note with its links
 uv run zk eval path/to/vault eval/fixture-queries.yaml         # Recall@k, MRR, latency
 uv run zk eval path/to/vault queries.yaml --mode keyword --mode semantic   # compare modes
@@ -58,6 +60,13 @@ The model, about 70 MB, is downloaded from Hugging Face the first time it is use
 data folder. Note text is never sent anywhere. Vectors are stored in the index, keyed by each note's
 content hash, so only new or edited notes are embedded and renamed notes keep their vectors.
 
+### Hybrid search
+
+Hybrid is the default mode. It runs both searches and fuses their rankings with reciprocal rank
+fusion: each note scores the sum of 1 / (10 + rank) over the lists it appears in. Use `--mode keyword`
+for a fast search that loads no model. Ranks are combined rather than
+scores because BM25 scores and cosine similarities are on different scales.
+
 ### MCP server
 
 `zk serve` lets Claude Code and Codex search the vault while you work. It runs over stdio (the client
@@ -65,7 +74,7 @@ starts it; no network port) and offers three read-only tools:
 
 | Tool | Returns |
 | --- | --- |
-| `search_notes(query, k, type, tag, mode)` | ranked hits with summary (and snippet in keyword mode), no bodies |
+| `search_notes(query, k, type, tag, mode)` | ranked hits with summary (and a snippet when keyword search matched), no bodies |
 | `get_note(note)` | one note in full, with the notes it links to and from |
 | `get_related(note, k)` | linked, backlinking and same-tag notes, with summaries |
 
@@ -145,7 +154,7 @@ sections), so an old vault can be checked without rewriting it.
 ```
 src/zk/notes.py   parse and validate one note (pure, no file access)
 src/zk/index.py   SQLite catalog: notes, links, issues, full-text index; incremental builds
-src/zk/search.py  keyword (BM25) and semantic (cosine) search with filters
+src/zk/search.py  keyword (BM25), semantic (cosine) and hybrid (RRF) search with filters
 src/zk/embed.py   local embedding model and the vector cache in the index
 src/zk/lookup.py  one note, or its neighbours, by id, file name, path or title
 src/zk/evaluate.py  retrieval metrics over a labelled query set

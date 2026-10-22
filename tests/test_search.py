@@ -86,3 +86,30 @@ def test_bad_mode_or_missing_embedder_is_an_error(conn):
         search(conn, "x", mode="fuzzy")
     with pytest.raises(ValueError, match="needs an embedder"):
         search(conn, "x", mode="semantic")
+
+
+def test_hybrid_fuses_ranks_from_both_lists(conn, embedder):
+    from zk.search import RRF_K, keyword_search, semantic_search
+
+    update_embeddings(conn, embedder)
+    query = "merging ranked lists"
+    kw = {h.path: h.rank for h in keyword_search(conn, query, k=50)}
+    sem = {h.path: h.rank for h in semantic_search(conn, embedder, query, k=50)}
+    hits = search(conn, query, k=10, mode="hybrid", embedder=embedder)
+
+    expected = {p: sum(1 / (RRF_K + r[p]) for r in (kw, sem) if p in r) for p in set(kw) | set(sem)}
+    assert [h.path for h in hits] == sorted(expected, key=lambda p: (-expected[p], p))[:10]
+    assert hits[0].path == "notes/reciprocal-rank-fusion.md"
+    assert hits[0].score == round(expected[hits[0].path], 6)
+    assert "[" in hits[0].snippet  # the keyword snippet survives fusion
+
+
+def test_hybrid_keeps_notes_only_one_list_finds(conn, embedder):
+    from zk.search import keyword_search
+
+    update_embeddings(conn, embedder)
+    # "zebra" matches no note's words, so only the semantic list has results.
+    assert keyword_search(conn, "zebra") == []
+    assert search(conn, "zebra", k=3, mode="hybrid", embedder=embedder)
+    with pytest.raises(ValueError, match="hybrid search needs an embedder"):
+        search(conn, "x", mode="hybrid")

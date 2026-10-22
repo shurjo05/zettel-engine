@@ -86,3 +86,19 @@ def test_semantic_mode(vault, tmp_path, embedder):
     assert result.is_error and "not enabled" in result.content[0].text
     result = call(plain, "search_notes", {"query": "x", "mode": "fuzzy"})
     assert result.is_error
+
+
+def test_hybrid_mode(vault, tmp_path, embedder):
+    server = create_server(vault, tmp_path / "index.sqlite", DEFAULT_EXCLUDES, embedder=embedder)
+    result = call(server, "search_notes", {"query": "merging ranked lists", "mode": "hybrid"})
+    assert json.loads(result.content[0].text)[0]["path"] == "notes/reciprocal-rank-fusion.md"
+
+
+def test_default_mode_is_hybrid_when_semantic_search_is_available(vault, tmp_path, embedder):
+    server = create_server(vault, tmp_path / "index.sqlite", DEFAULT_EXCLUDES, embedder=embedder)
+    args = {"query": "zebra", "k": 3}  # no word matches, so only hybrid finds anything
+    assert json.loads(call(server, "search_notes", args).content[0].text)
+    assert (
+        json.loads(call(make(vault, tmp_path / "plain"), "search_notes", args).content[0].text)
+        == []
+    )

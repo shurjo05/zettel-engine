@@ -100,6 +100,8 @@ def run_eval(
         relevant = [p for p in (resolve(x) for x in labels) if p]
         unresolved = [x for x in labels if not resolve(x)]
 
+        if embedder is not None and not report.results:
+            embedder.embed_query("warm up")  # load the model outside the timed region
         start = time.perf_counter()
         hits = search(conn, q["query"], k=depth, mode=mode, embedder=embedder)
         latency_ms = (time.perf_counter() - start) * 1000
