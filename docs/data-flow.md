@@ -7,6 +7,7 @@ sends vault content somewhere new.
 | --- | --- | --- | --- |
 | `zk index`, `zk check`, `zk search`, `zk show`, `zk eval` | Markdown files in the vault | SQLite index outside the vault | No |
 | Semantic search, `zk index --embed` (M4) | Note text from the index | Vectors in the SQLite index | No: the model runs locally. Only the model weights are downloaded, from huggingface.co, into the zk data folder |
+| `zk capture` (M6a) | A Claude Code transcript in `~/.claude/projects`, or text you pass | A new file in the vault's `inbox/`, with common secrets redacted | No |
 | `zk serve` (MCP, M3) | The vault (to refresh the index) and the index | SQLite index outside the vault | Yes, the parts an agent asks for: see below |
 
 ### MCP server

@@ -1,0 +1,9 @@
+{"type": "user", "message": {"role": "user", "content": "<system-reminder>harness note</system-reminder>How should I merge two ranked result lists?"}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "secret thoughts"}, {"type": "text", "text": "Use reciprocal rank fusion: sum 1/(k + rank) per document."}, {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "file-list"}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "It needs only ranks, so BM25 and cosine scores never have to be compared."}]}}
+{"type": "assistant", "isSidechain": true, "message": {"role": "assistant", "content": [{"type": "text", "text": "subagent chatter"}]}}
+{"type": "attachment", "attachment": {"x": 1}}
+not json
+{"type": "user", "message": {"role": "user", "content": "Why k = 60? My key is sk-ant-abcdefghijklmnopqrstuvwxyz123456 by the way."}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Sixty comes from Cormack et al. (2009); smaller values trust each list's top ranks more. Sixty comes from Cormack et al. (2009); smaller values trust each list's top ranks more. Sixty comes from Cormack et al. (2009); smaller values trust each list's top ranks more. "}]}}
