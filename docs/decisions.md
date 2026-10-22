@@ -83,8 +83,14 @@ is imported only by `zk/server.py` (and lazily by `zk serve`), so the core stays
 
 Semantic search uses `BAAI/bge-small-en-v1.5` (384 dimensions) through fastembed, running on the
 CPU. A local model keeps note text on this machine and needs no key or per-call cost; an API model
-would only ever be opt-in. Each note is one vector (title plus body): notes are atomic and well under
-the model's 512-token limit, so chunking would add complexity without a problem to solve.
+would only ever be opt-in. fastembed downloads its quantized ONNX build of the model (about 65 MB, from
+the `Qdrant/bge-small-en-v1.5-onnx-Q` repository on Hugging Face) once into the zk data folder.
+
+Each note is one vector (title plus body), with no chunking. The model reads at most 512 tokens and
+fastembed silently drops the rest. On the legacy test copy (96 notes) the median note is 481 tokens and
+33 notes run over, the longest at 887, so their tails are not embedded. The title and summary come
+first and are always inside the window, and semantic search still reached an MRR of 0.92 on the eval
+set, so chunking is deferred until the eval shows a miss caused by truncation.
 
 Vectors live in the existing SQLite index (`embeddings`, keyed by content hash and model) and are
 scored by brute force: one matrix-vector product over all notes. At a few thousand notes that is
