@@ -1,5 +1,6 @@
 import pytest
 
+from zk.embed import update_embeddings
 from zk.index import build_index, open_db
 from zk.search import fts_query, search
 
@@ -60,3 +61,28 @@ def test_search_sees_edits_and_deletes(conn, vault):
     note.unlink()
     build_index(conn, vault)
     assert search(conn, "quasar") == []
+
+
+def test_semantic_search_ranks_by_cosine_similarity(conn, embedder):
+    assert search(conn, "merging lists", mode="semantic", embedder=embedder) == []  # no vectors yet
+    update_embeddings(conn, embedder)
+    hits = search(conn, "merging ranked lists", k=3, mode="semantic", embedder=embedder)
+    assert hits[0].path == "notes/reciprocal-rank-fusion.md"
+    assert [h.rank for h in hits] == [1, 2, 3]
+    assert hits[0].score >= hits[1].score >= hits[2].score
+    assert -1.0 <= hits[-1].score <= 1.0
+
+
+def test_semantic_search_applies_filters(conn, embedder):
+    update_embeddings(conn, embedder)
+    hits = search(conn, "ranking", k=10, mode="semantic", embedder=embedder, tag="embeddings")
+    assert [h.path for h in hits] == ["notes/embeddings.md"]
+    hits = search(conn, "ranking", k=10, mode="semantic", embedder=embedder, type="pattern")
+    assert {h.type for h in hits} == {"pattern"}
+
+
+def test_bad_mode_or_missing_embedder_is_an_error(conn):
+    with pytest.raises(ValueError, match="unknown search mode"):
+        search(conn, "x", mode="fuzzy")
+    with pytest.raises(ValueError, match="needs an embedder"):
+        search(conn, "x", mode="semantic")

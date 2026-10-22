@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from zk import cli
 from zk.cli import main
 
 
@@ -70,3 +71,33 @@ def test_show_unknown_note_exits_with_a_message(vault, tmp_path):
     with pytest.raises(SystemExit) as exc:
         main(["show", str(vault), "--db", str(tmp_path / "index.sqlite"), "fusion"])
     assert "Closest matches" in str(exc.value.code)
+
+
+@pytest.fixture
+def stand_in_model(monkeypatch):
+    from conftest import WordEmbedder
+
+    monkeypatch.setattr(cli, "make_embedder", lambda model: WordEmbedder(model))
+
+
+def test_semantic_search_command(vault, tmp_path, capsys, stand_in_model):
+    db = str(tmp_path / "index.sqlite")
+    assert (
+        main(["search", str(vault), "--db", db, "--mode", "semantic", "merging ranked lists"]) == 0
+    )
+    captured = capsys.readouterr()
+    assert captured.out.startswith(" 1. Reciprocal Rank Fusion")
+    assert "10 new, 0 reused" in captured.err
+
+    assert main(["index", str(vault), "--db", db, "--embed"]) == 0
+    assert "0 new, 10 reused" in capsys.readouterr().err
+
+
+def test_eval_compares_modes(vault, tmp_path, capsys, stand_in_model):
+    queries = str(Path(__file__).parents[1] / "eval" / "fixture-queries.yaml")
+    args = ["eval", str(vault), queries, "--db", str(tmp_path / "i.sqlite")]
+    assert main([*args, "--mode", "keyword", "--mode", "semantic"]) == 0
+    out = capsys.readouterr().out
+    assert "== keyword ==" in out and "== semantic ==" in out
+    assert main([*args, "--mode", "keyword", "--mode", "semantic", "--json"]) == 0
+    assert set(json.loads(capsys.readouterr().out)) == {"keyword", "semantic"}

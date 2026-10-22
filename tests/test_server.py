@@ -73,3 +73,16 @@ def test_serving_never_writes_to_the_vault(vault, tmp_path):
     call(server, "get_related", {"note": "bm25-ranking"})
     after = {p: p.read_bytes() for p in vault.rglob("*") if p.is_file()}
     assert before == after
+
+
+def test_semantic_mode(vault, tmp_path, embedder):
+    server = create_server(vault, tmp_path / "index.sqlite", DEFAULT_EXCLUDES, embedder=embedder)
+    result = call(server, "search_notes", {"query": "merging ranked lists", "mode": "semantic"})
+    hits = json.loads(result.content[0].text)
+    assert hits[0]["path"] == "notes/reciprocal-rank-fusion.md"
+
+    plain = make(vault, tmp_path / "other")
+    result = call(plain, "search_notes", {"query": "x", "mode": "semantic"})
+    assert result.is_error and "not enabled" in result.content[0].text
+    result = call(plain, "search_notes", {"query": "x", "mode": "fuzzy"})
+    assert result.is_error
