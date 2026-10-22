@@ -78,3 +78,33 @@ inputs; the official Python SDK (`mcp` 2.x) implements it and is what clients ar
 It brings pydantic, anyio, starlette and httpx with it, which is the heaviest dependency so far, but
 writing the protocol by hand would be more code to get wrong than everything else in this repo. It
 is imported only by `zk/server.py` (and lazily by `zk serve`), so the core stays usable without it.
+
+## 11. Local embeddings, exact search in NumPy, cached by content hash (2026-10-22)
+
+Semantic search uses `BAAI/bge-small-en-v1.5` (384 dimensions) through fastembed, running on the
+CPU. A local model keeps note text on this machine and needs no key or per-call cost; an API model
+would only ever be opt-in. fastembed downloads its quantized ONNX build of the model (about 65 MB, from
+the `Qdrant/bge-small-en-v1.5-onnx-Q` repository on Hugging Face) once into the zk data folder.
+
+Each note is one vector (title plus body), with no chunking. The model reads at most 512 tokens and
+fastembed silently drops the rest. On the legacy test copy (96 notes) the median note is 481 tokens and
+33 notes run over, the longest at 887, so their tails are not embedded. The title and summary come
+first and are always inside the window, and semantic search still reached an MRR of 0.92 on the eval
+set, so chunking is deferred until the eval shows a miss caused by truncation.
+
+Vectors live in the existing SQLite index (`embeddings`, keyed by content hash and model) and are
+scored by brute force: one matrix-vector product over all notes. At a few thousand notes that is
+exact and takes well under a millisecond, so a vector database (Chroma, Qdrant) or an approximate
+index (HNSW) would add a second store to keep in sync for no measurable gain. If the vault ever
+reaches roughly 100k notes, sqlite-vec is the next step and keeps everything in one file.
+
+The content-hash key means a renamed note reuses its vector and an edited note is re-embedded;
+the model key means switching models never mixes incompatible vectors. Keyword search stays the
+default until the eval and M5 (hybrid) decide otherwise.
+
+## 12. fastembed as a dependency (2026-10-22)
+
+fastembed runs ONNX models with onnxruntime and brings tokenizers, huggingface-hub and NumPy.
+The alternative, sentence-transformers, needs PyTorch, roughly ten times the install, for the same
+models. fastembed is imported only when something is embedded, so commands that don't embed start
+as fast as before.

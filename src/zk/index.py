@@ -19,7 +19,7 @@ from pathlib import Path
 
 from zk.notes import Note, content_hash, parse_note, validate
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 
 # Raw captures and templates live in the vault but are not atomic notes.
 DEFAULT_EXCLUDES = ("inbox/**", "templates/**")
@@ -65,6 +65,16 @@ CREATE INDEX issues_path ON issues(path);
 
 -- Full-text index for keyword search (BM25). Porter stemming makes
 -- "deduplicate" match "deduplication". path is stored, not searched.
+-- One vector per (note content, model). Keyed by content hash, not path, so
+-- a renamed note keeps its vector. Written by zk/embed.py.
+CREATE TABLE embeddings (
+    content_hash TEXT NOT NULL,
+    model        TEXT NOT NULL,
+    vector       BLOB NOT NULL,      -- float32, unit length
+    PRIMARY KEY (content_hash, model)
+);
+CREATE INDEX notes_hash ON notes(content_hash);
+
 CREATE VIRTUAL TABLE notes_fts USING fts5(
     path UNINDEXED, title, aliases, tags, summary, body,
     tokenize = 'porter unicode61 remove_diacritics 2'
@@ -84,23 +94,26 @@ class BuildStats:
         return self.added + self.updated + self.unchanged
 
 
-def default_db_path(vault: Path) -> Path:
-    """Where the index lives: outside the vault, one file per vault.
+def data_dir() -> Path:
+    """zk's own folder, outside any vault: indexes and downloaded models live here.
 
     ZK_DATA_DIR overrides; otherwise %LOCALAPPDATA%\\zk on Windows and
     ~/.local/share/zk elsewhere.
     """
     base = os.environ.get("ZK_DATA_DIR")
     if base:
-        root = Path(base)
-    elif os.name == "nt" and os.environ.get("LOCALAPPDATA"):
-        root = Path(os.environ["LOCALAPPDATA"]) / "zk"
-    else:
-        xdg = os.environ.get("XDG_DATA_HOME")
-        root = (Path(xdg) if xdg else Path.home() / ".local" / "share") / "zk"
+        return Path(base)
+    if os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+        return Path(os.environ["LOCALAPPDATA"]) / "zk"
+    xdg = os.environ.get("XDG_DATA_HOME")
+    return (Path(xdg) if xdg else Path.home() / ".local" / "share") / "zk"
+
+
+def default_db_path(vault: Path) -> Path:
+    """Where the index lives: in data_dir(), one file per vault."""
     vault = vault.resolve()
     digest = hashlib.sha1(str(vault).encode()).hexdigest()[:8]
-    return root / f"{vault.name or 'vault'}-{digest}.sqlite"
+    return data_dir() / f"{vault.name or 'vault'}-{digest}.sqlite"
 
 
 def open_db(db_path: Path | str) -> sqlite3.Connection:

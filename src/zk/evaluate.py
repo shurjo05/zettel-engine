@@ -20,10 +20,14 @@ import statistics
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 
 from zk.search import search
+
+if TYPE_CHECKING:
+    from zk.embed import Embedder
 
 CUTOFFS = (1, 3, 5, 10)
 
@@ -82,7 +86,13 @@ def _resolver(conn: sqlite3.Connection):
     return lambda label: by_label.get(str(label).lower().removesuffix(".md"))
 
 
-def run_eval(conn: sqlite3.Connection, queries: list[dict], depth: int = 10) -> EvalReport:
+def run_eval(
+    conn: sqlite3.Connection,
+    queries: list[dict],
+    depth: int = 10,
+    mode: str = "keyword",
+    embedder: Embedder | None = None,
+) -> EvalReport:
     resolve = _resolver(conn)
     report = EvalReport()
     for q in queries:
@@ -91,7 +101,7 @@ def run_eval(conn: sqlite3.Connection, queries: list[dict], depth: int = 10) -> 
         unresolved = [x for x in labels if not resolve(x)]
 
         start = time.perf_counter()
-        hits = search(conn, q["query"], k=depth)
+        hits = search(conn, q["query"], k=depth, mode=mode, embedder=embedder)
         latency_ms = (time.perf_counter() - start) * 1000
 
         ranked = [h.path for h in hits]

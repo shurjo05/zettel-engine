@@ -13,8 +13,12 @@ import sys
 from pathlib import Path
 
 from zk import evaluate, lookup
+from zk.embed import DEFAULT_MODEL, FastEmbedder, update_embeddings
 from zk.index import DEFAULT_EXCLUDES, build_index, default_db_path, health_report, open_db
-from zk.search import search
+from zk.search import MODES, search
+
+# Builds the embedder for --model; tests swap in a stand-in that needs no download.
+make_embedder = FastEmbedder
 
 
 def _common(parser: argparse.ArgumentParser) -> None:
@@ -50,8 +54,29 @@ def _open(args: argparse.Namespace):
     return conn
 
 
+def _model_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--model", default=DEFAULT_MODEL, help=f"embedding model (default {DEFAULT_MODEL})"
+    )
+
+
+def _embedder(args: argparse.Namespace, conn):
+    """The embedder for --model, with every note's vector brought up to date."""
+    embedder = make_embedder(args.model)
+    stats = update_embeddings(conn, embedder)
+    print(
+        f"embeddings ({embedder.model}): {stats.embedded} new, {stats.reused} reused, "
+        f"{stats.removed} removed",
+        file=sys.stderr,
+    )
+    return embedder
+
+
 def cmd_index(args: argparse.Namespace) -> int:
-    _open(args).close()
+    conn = _open(args)
+    if args.embed:
+        _embedder(args, conn)
+    conn.close()
     return 0
 
 
@@ -68,7 +93,10 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 def cmd_search(args: argparse.Namespace) -> int:
     conn = _open(args)
-    hits = search(conn, args.query, k=args.k, type=args.type, tag=args.tag)
+    embedder = _embedder(args, conn) if args.mode == "semantic" else None
+    hits = search(
+        conn, args.query, k=args.k, type=args.type, tag=args.tag, mode=args.mode, embedder=embedder
+    )
     conn.close()
     if args.json:
         print(json.dumps([h.to_dict() for h in hits], indent=2))
@@ -114,28 +142,32 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     db = _db(args)
     print(f"zk: serving {args.vault.resolve()} over stdio (read-only), index {db}", file=sys.stderr)
-    create_server(args.vault, db, (*DEFAULT_EXCLUDES, *args.exclude)).run("stdio")
+    excludes = (*DEFAULT_EXCLUDES, *args.exclude)
+    create_server(args.vault, db, excludes, embedder=make_embedder(args.model)).run("stdio")
     return 0
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
     queries = evaluate.load_queries(args.queries)
+    modes = list(dict.fromkeys(args.mode or ["keyword"]))
     conn = _open(args)
-    report = evaluate.run_eval(conn, queries, depth=10)
+    embedder = _embedder(args, conn) if "semantic" in modes else None
+    reports = {
+        m: evaluate.run_eval(conn, queries, depth=10, mode=m, embedder=embedder) for m in modes
+    }
     conn.close()
     if args.json:
-        print(
-            json.dumps(
-                {
-                    "summary": report.summary(),
-                    "by_kind": {k: report.summary(k) for k in report.kinds()},
-                    "results": [r.__dict__ for r in report.results],
-                },
-                indent=2,
-            )
-        )
+        out = {
+            m: {
+                "summary": r.summary(),
+                "by_kind": {k: r.summary(k) for k in r.kinds()},
+                "results": [q.__dict__ for q in r.results],
+            }
+            for m, r in reports.items()
+        }
+        print(json.dumps(out if len(modes) > 1 else out[modes[0]], indent=2))
     else:
-        print(evaluate.format_report(report))
+        print("\n\n".join(f"== {m} ==\n{evaluate.format_report(r)}" for m, r in reports.items()))
     return 0
 
 
@@ -186,6 +218,8 @@ def main(argv: list[str] | None = None) -> int:
 
     p_index = sub.add_parser("index", help="build or refresh the index (reads the vault only)")
     _common(p_index)
+    p_index.add_argument("--embed", action="store_true", help="also compute note embeddings")
+    _model_option(p_index)
     p_index.set_defaults(func=cmd_index)
 
     p_check = sub.add_parser("check", help="index, then report the vault's health")
@@ -194,9 +228,11 @@ def main(argv: list[str] | None = None) -> int:
     p_check.add_argument("--limit", type=int, default=20, help="rows per list, 0 for all")
     p_check.set_defaults(func=cmd_check)
 
-    p_search = sub.add_parser("search", help="keyword search (BM25) over the vault")
+    p_search = sub.add_parser("search", help="keyword (BM25) or semantic search over the vault")
     _common(p_search)
-    p_search.add_argument("query", help="free text; words are OR-ed and ranked by BM25")
+    p_search.add_argument("query", help="free text")
+    p_search.add_argument("--mode", choices=MODES, default="keyword", help="default keyword")
+    _model_option(p_search)
     p_search.add_argument("-k", type=int, default=5, help="number of results (default 5)")
     p_search.add_argument("--type", help="only notes of this type")
     p_search.add_argument("--tag", help="only notes with this tag")
@@ -212,11 +248,16 @@ def main(argv: list[str] | None = None) -> int:
     p_eval = sub.add_parser("eval", help="measure retrieval quality on a labelled query set")
     _common(p_eval)
     p_eval.add_argument("queries", type=Path, help="YAML query set (see zk/evaluate.py)")
+    p_eval.add_argument(
+        "--mode", action="append", choices=MODES, help="search mode to evaluate (repeatable)"
+    )
+    _model_option(p_eval)
     p_eval.add_argument("--json", action="store_true", help="machine-readable output")
     p_eval.set_defaults(func=cmd_eval)
 
     p_serve = sub.add_parser("serve", help="run the read-only MCP server over stdio")
     _common(p_serve)
+    _model_option(p_serve)
     p_serve.set_defaults(func=cmd_serve)
 
     args = parser.parse_args(argv)

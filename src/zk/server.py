@@ -19,8 +19,9 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from zk import lookup
+from zk.embed import Embedder, update_embeddings
 from zk.index import build_index, open_db
-from zk.search import search
+from zk.search import MODES, search
 
 INSTRUCTIONS = """\
 Tools for a personal Zettelkasten: short Markdown notes, one idea each, linked to each other.
@@ -37,16 +38,20 @@ def _compact(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-def create_server(vault: Path, db: Path, excludes: Iterable[str]) -> MCPServer:
+def create_server(
+    vault: Path, db: Path, excludes: Iterable[str], embedder: Embedder | None = None
+) -> MCPServer:
     vault = vault.resolve()
     excludes = tuple(excludes)
     lock = threading.Lock()  # tools run in worker threads; refresh one at a time
 
-    def run(fn: Callable[[sqlite3.Connection], object]) -> str:
+    def run(fn: Callable[[sqlite3.Connection], object], embed: bool = False) -> str:
         with lock:
             conn = open_db(db)
             try:
                 build_index(conn, vault, excludes)  # cheap when nothing changed
+                if embed:
+                    update_embeddings(conn, embedder)  # only new or edited notes
                 return _compact(fn(conn))
             except LookupError as exc:  # NoteNotFound, AmbiguousNote
                 raise ToolError(str(exc)) from exc
@@ -57,16 +62,32 @@ def create_server(vault: Path, db: Path, excludes: Iterable[str]) -> MCPServer:
 
     @server.tool(annotations=READ_ONLY, structured_output=False)
     def search_notes(
-        query: str, k: int = 5, type: str | None = None, tag: str | None = None
+        query: str,
+        k: int = 5,
+        type: str | None = None,
+        tag: str | None = None,
+        mode: str = "keyword",
     ) -> str:
-        """Keyword search (BM25, with stemming) over the notes.
+        """Search the notes. Returns up to k hits, best first, without bodies.
 
-        Returns up to k hits, best first, each with id, path, title, type, summary, score and a
-        short snippet ([matched words] in brackets). Bodies are not included. Optional filters:
-        type (concept, pattern, problem, decision) and tag.
+        mode "keyword" (default) ranks by BM25 over stemmed words and adds a short snippet with
+        [matched words]; use it for names, identifiers and exact terms. mode "semantic" ranks by
+        meaning (local embeddings, cosine similarity); use it when the question is phrased in
+        different words than the notes. Each hit has id, path, title, type, summary and score.
+        Optional filters: type (concept, pattern, problem, decision) and tag.
         """
+        if mode not in MODES:
+            raise ToolError(f"mode must be one of: {', '.join(MODES)}")
+        if mode == "semantic" and embedder is None:
+            raise ToolError("semantic search is not enabled on this server")
         k = max(1, min(k, 25))
-        return run(lambda c: [h.to_dict() for h in search(c, query, k=k, type=type, tag=tag)])
+        return run(
+            lambda c: [
+                h.to_dict()
+                for h in search(c, query, k=k, type=type, tag=tag, mode=mode, embedder=embedder)
+            ],
+            embed=mode == "semantic",
+        )
 
     @server.tool(annotations=READ_ONLY, structured_output=False)
     def get_note(note: str) -> str:
