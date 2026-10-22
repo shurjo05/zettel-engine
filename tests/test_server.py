@@ -102,3 +102,39 @@ def test_default_mode_is_hybrid_when_semantic_search_is_available(vault, tmp_pat
         json.loads(call(make(vault, tmp_path / "plain"), "search_notes", args).content[0].text)
         == []
     )
+
+
+def test_ingest_tools_exist_only_with_allow_writes(vault, tmp_path, embedder):
+    db = tmp_path / "index.sqlite"
+    plain = {t.name for t in tools(create_server(vault, db, DEFAULT_EXCLUDES, embedder=embedder))}
+    assert "propose_note" not in plain and "apply_proposal" not in plain
+    server = create_server(vault, db, DEFAULT_EXCLUDES, embedder=embedder, allow_writes=True)
+    offered = {t.name: t for t in tools(server)}
+    assert {"list_inbox", "read_capture", "check_duplicates", "propose_note"} <= set(offered)
+    assert {"list_proposals", "apply_proposal", "discard"} <= set(offered)
+    assert offered["apply_proposal"].annotations.destructive_hint is False
+
+
+def test_propose_then_apply_over_mcp(vault, tmp_path, embedder):
+    server = create_server(
+        vault, tmp_path / "index.sqlite", DEFAULT_EXCLUDES, embedder=embedder, allow_writes=True
+    )
+    args = {
+        "title": "Rank Fusion Needs Only Ranks",
+        "type": "concept",
+        "summary": "Fusing by rank avoids comparing scores on different scales.",
+        "sources": ["conversation:2026-10-22"],
+    }
+    result = call(server, "propose_note", args)
+    assert not result.is_error, result.content[0].text
+    name = json.loads(result.content[0].text)["proposal"]
+    assert not (vault / "notes" / name).exists()
+    bad = call(server, "propose_note", {**args, "type": "idea"})
+    assert bad.is_error and "type must be one of" in bad.content[0].text
+
+    applied = json.loads(call(server, "apply_proposal", {"name": name}).content[0].text)
+    assert applied["note"] == f"notes/{name}"
+    hits = json.loads(
+        call(server, "search_notes", {"query": "scales", "mode": "keyword"}).content[0].text
+    )
+    assert hits[0]["path"] == f"notes/{name}"  # searchable straight away
