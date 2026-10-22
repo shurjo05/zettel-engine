@@ -8,6 +8,7 @@ then hard-linked into place), so a crash cannot leave half a note behind.
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -57,3 +58,53 @@ def write_new(vault: Path, rel: str, text: str) -> Path:
         if os.path.exists(tmp):
             os.unlink(tmp)
     return target
+
+
+def move_new(vault: Path, src: str, dst: str) -> Path:
+    """Move vault/src to vault/dst. Fails if dst exists; the content is never lost or replaced."""
+    source = _inside(vault, Path(src))
+    target = _inside(vault, Path(dst))
+    if not source.is_file():
+        raise VaultWriteError(f"{src} does not exist")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        try:
+            os.link(source, target)
+        except FileExistsError:
+            raise
+        except OSError:
+            if os.name != "nt":
+                raise
+            os.rename(source, target)  # Windows rename never replaces an existing file
+            return target
+    except FileExistsError:
+        raise VaultWriteError(f"{dst} already exists; zk never overwrites a file") from None
+    os.unlink(source)  # the content now lives at target
+    return target
+
+
+def git_commit(vault: Path, paths: list[str], message: str) -> str | None:
+    """Commit exactly `paths` (added, changed or removed) if the vault is a git repo.
+
+    Anything else you have staged or changed is left alone. Returns the commit
+    hash, or None when the vault is not a repository.
+    """
+    if not (vault / ".git").exists():
+        return None
+
+    def git(*args: str, check: bool = True) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", str(vault), *args], capture_output=True, text=True, check=check
+        )
+
+    known = [
+        p
+        for p in paths
+        if (vault / p).exists()
+        or git("ls-files", "--error-unmatch", "--", p, check=False).returncode == 0
+    ]
+    if not known:
+        return None
+    git("add", "-A", "--", *known)
+    git("commit", "--quiet", "-m", message, "--only", "--", *known)
+    return git("rev-parse", "HEAD").stdout.strip()

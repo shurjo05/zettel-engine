@@ -146,3 +146,18 @@ with fewer than two user messages.
 written to a temporary file and hard-linked to the new name, which fails if the name exists, so a
 crash never leaves a partial file and an existing note can never be replaced. The hook always exits
 0 so a capture failure cannot disturb a Claude Code session; it reports on stderr instead.
+
+## 15. Proposals wait in the inbox; apply is a scoped git commit (2026-10-22)
+
+The agent never writes a note directly. `propose_note` takes structured fields and zk renders the
+Markdown, so every note has the same frontmatter, H1, summary and sections regardless of which model
+wrote it, and anything `zk check` would flag is refused before it is saved. Proposals live in
+`inbox/proposals/`, which the index skips, so drafts never show up in search or mix with notes.
+`apply_proposal` exists only behind `--allow-writes`, and its description tells the agent to call
+it only after the person approves; the person can also read and edit proposals in Obsidian first.
+
+Applying commits exactly the files it touched (`git commit --only`), so a note can be reverted on its
+own and changes the person has not committed are never swept in. Editing existing notes is left out
+for now: every tool creates or moves files, which keeps the worst case of a confused agent to an
+unwanted new file. The duplicate verdict thresholds (cosine 0.90 likely duplicate, 0.75 related)
+are starting values to be calibrated on real notes.

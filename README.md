@@ -16,7 +16,7 @@ rebuildable index stored outside the vault.
 | M3 | Read-only MCP server (`zk serve`) | done |
 | M4 | Semantic search with local embeddings | done |
 | M5 | Hybrid search (reciprocal rank fusion), the default mode | done |
-| M6 | Ingest: session capture (M6a, in progress), proposals and review (M6b) | in progress |
+| M6 | Ingest: session capture (M6a), proposals with review (M6b) | in progress |
 | M7-M9 | Import, maintenance, evaluation | planned |
 
 ## Setup
@@ -137,6 +137,25 @@ To capture every Claude Code session automatically, add a SessionEnd hook to
 With `--hook`, `zk capture` reads the hook's event from stdin, and if anything goes wrong it reports
 on stderr and exits 0, so a capture problem never interrupts Claude Code.
 
+### Turning captures into notes
+
+Start the MCP server with `--allow-writes` to add the ingest tools: `list_inbox`, `read_capture`,
+`check_duplicates`, `propose_note`, `list_proposals`, `apply_proposal` and `discard`. Then ask the
+agent to process the inbox; [docs/process-inbox.md](docs/process-inbox.md) is a ready prompt.
+
+- `propose_note` takes structured fields (title, type, summary, details, tags, sources, links),
+  renders them in the note format, refuses anything `zk check` would flag, compares it with existing
+  notes by embedding similarity, and saves it to `inbox/proposals/`. Nothing reaches `notes/` yet.
+- `apply_proposal`, which the agent calls only after you approve, moves the note into `notes/`,
+  moves its capture to `inbox/processed/`, and, if the vault is a git repository, commits exactly
+  those files, so `git revert` undoes it. Your own uncommitted changes are left alone.
+- `discard` moves a rejected proposal to `inbox/rejected/` or an empty capture to
+  `inbox/processed/`. No tool edits or deletes an existing note.
+
+```bash
+claude mcp add zk --scope user -- uv --directory C:\path\to\zettel-engine run zk serve C:\path\to\vault --allow-writes
+```
+
 ### Evaluation
 
 A query set is a YAML file of queries with the notes that should be found for each:
@@ -199,7 +218,9 @@ src/zk/lookup.py  one note, or its neighbours, by id, file name, path or title
 src/zk/evaluate.py  retrieval metrics over a labelled query set
 src/zk/server.py  MCP server: the same functions as read-only tools
 src/zk/capture.py  session transcripts and text into inbox captures (pure)
-src/zk/vault.py   the only writer of vault files: create-only, atomic
+src/zk/vault.py   the only writer of vault files: create or move, never overwrite, atomic
+src/zk/proposals.py  render a proposed note in the schema and validate it (pure)
+src/zk/ingest.py  inbox, proposals, duplicate check and apply, writing through vault.py
 src/zk/cli.py     the `zk` command
 eval/             query sets for the fixture vault
 tests/            pytest suite and a small synthetic fixture vault
