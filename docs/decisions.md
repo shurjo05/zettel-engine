@@ -53,3 +53,28 @@ because they never hurt, and the eval set will judge them again as it grows.
 `zk eval` measures Recall@k, MRR and latency on a labelled query set so each later change (embeddings,
 hybrid ranking, link expansion) is judged against a recorded baseline instead of impressions. The
 repository holds only the fixture query set; sets that name private notes live with the vault.
+
+## 9. A read-only MCP server over stdio (2026-10-16)
+
+`zk serve` exposes `search_notes`, `get_note` and `get_related` as MCP tools, so Claude Code and
+Codex use the same library as the CLI. It is read-only: no write tools exist until M6, and then only
+behind `--allow-writes`. Stdio rather than HTTP because there is one user on one machine; it needs no
+open port and no auth. Tools rather than MCP resources because agents call tools; clients mostly
+show resources to humans.
+
+Context efficiency shapes the tools. Search returns summaries and snippets, never bodies; bodies
+come one note at a time from `get_note` and are capped at 20,000 characters; `get_related` returns
+summaries so an agent can walk the link graph cheaply. Results are compact JSON text (no
+indentation, no duplicate structured copy), since every returned character costs context.
+
+Each call refreshes the index before answering, so edits in Obsidian are visible immediately.
+To make that cheap, `build_index` now compares a file's hash before parsing it and re-resolves links
+only when something changed: a no-change refresh of the 96-note legacy copy fell from 88 ms to 7 ms.
+
+## 10. The official `mcp` SDK as a dependency (2026-10-16)
+
+The Model Context Protocol is JSON-RPC with a handshake, capability negotiation and schemas for tool
+inputs; the official Python SDK (`mcp` 2.x) implements it and is what clients are tested against.
+It brings pydantic, anyio, starlette and httpx with it, which is the heaviest dependency so far, but
+writing the protocol by hand would be more code to get wrong than everything else in this repo. It
+is imported only by `zk/server.py` (and lazily by `zk serve`), so the core stays usable without it.
