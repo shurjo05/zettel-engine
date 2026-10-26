@@ -17,7 +17,8 @@ rebuildable index stored outside the vault.
 | M4 | Semantic search with local embeddings | done |
 | M5 | Hybrid search (reciprocal rank fusion), the default mode | done |
 | M6 | Ingest: session capture, automatic notes with duplicate check, checks that warn | done |
-| M7-M9 | Import, maintenance, evaluation | planned |
+| M7 | Import the legacy notes: convert, dedup, repair links | in progress |
+| M8-M9 | Maintenance, evaluation | planned |
 
 ## Setup
 
@@ -184,6 +185,32 @@ run:
 `ZK_INGESTING=1`, so the headless session's own end isn't captured again. `--allowedTools
 mcp__zk` limits that agent to the zk tools, which can only create and move files.
 
+### Importing a legacy vault
+
+`zk import` brings an old vault's notes into this one. It only reads the old folder.
+
+```bash
+uv run zk import "C:\Obsidian\AI Second Brain\AI Brain" C:\path\to\vault --queries old-queries.yaml --dry-run
+uv run zk import "C:\Obsidian\AI Second Brain\AI Brain" C:\path\to\vault --queries old-queries.yaml
+```
+
+- **Every file is accounted for.** A file with a note `type` is imported. Everything else (system
+  docs, maps, templates, code, empty files) is skipped, and the report says why.
+- **Notes keep their history.** The old id (its timestamp part), the created and updated dates,
+  tags, aliases and sources are kept, and a `legacy:<old path>` source is added. Summary, Core Idea,
+  Example and the Links list become the new layout. `domain`, `confidence`, `status` and the empty
+  `related` field are dropped; the old vault still has them.
+- **Duplicates are held**, exactly as in ingest. Accepted notes are imported before inbox ones, so
+  when two match it's the inbox copy that goes to `inbox/held/`. Links to a held note point at the
+  note it duplicates.
+- **Links are repaired.** A link is rewritten to its note's new name, found by file name, id, title
+  or alias. A drifted link (a shorter slug, an old id prefix, a missing "by" or "for") goes to the
+  one note whose name holds at least 75% of its words, and only if no other note fits as well.
+  Links that still don't resolve are listed.
+- `--queries` carries a legacy test set over to `eval/legacy-queries.yaml`, with its answers renamed.
+- `--dry-run` runs the same import into a throwaway copy and prints the report. A real import
+  writes the report to `inbox/reports/` and is one git commit.
+
 ### Evaluation
 
 A query set is a YAML file of queries with the notes that should be found for each:
@@ -252,6 +279,7 @@ src/zk/vault.py   the only writer of vault files: create or move, never overwrit
 src/zk/proposals.py  render a note draft in the schema and validate it (pure)
 src/zk/ingest.py  one ingest run: duplicate check, write, questions, commit, writing through vault.py
 src/zk/checks.py  warnings after each ingest: score drops beyond noise, new-note health
+src/zk/migrate.py  import a legacy vault: convert, hold duplicates, repair links, report
 src/zk/cli.py     the `zk` command
 eval/             query sets for the fixture vault
 tests/            pytest suite and a small synthetic fixture vault

@@ -204,3 +204,15 @@ def test_check_lists_long_notes_and_near_duplicates(vault, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "over about 512 tokens" in out and "notes/bm25-copy.md (~" in out
     assert "near-duplicates" in out
+
+
+def test_import_dry_run_then_import(vault, tmp_path, capsys):
+    legacy = Path(__file__).parent / "fixtures" / "legacy"
+    db = ["--db", str(tmp_path / "i.sqlite")]
+    assert main(["import", str(legacy), str(vault), *db, "--dry-run"]) == 0
+    out = capsys.readouterr()
+    assert "8 legacy files: 3 imported, 1 held" in out.out and "nothing was written" in out.err
+    assert not (vault / "notes" / "cache-embeddings-by-content-hash.md").exists()
+    assert main(["import", str(legacy), str(vault), *db]) == 0
+    assert "3 imported" in capsys.readouterr().out
+    assert (vault / "notes" / "cache-embeddings-by-content-hash.md").is_file()

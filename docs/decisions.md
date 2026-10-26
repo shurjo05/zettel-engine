@@ -214,3 +214,25 @@ anything new; `zk check` (with `--duplicates`) shows the whole vault on demand. 
 estimated at 3.7 characters per token, the average for bge-small on the legacy notes, because the
 tokenizer is only available once the model is downloaded. There's no scheduled report, and nothing
 is re-tuned automatically. Both were options Shurjo chose against.
+
+## 18. Legacy notes are imported by code, not by an agent (2026-10-26)
+
+The plan said the old notes would go "through the M6 pipeline". The deterministic half of it is
+used here: the schema renderer, the duplicate check at 0.85, held notes and one commit. The agent
+half isn't. The legacy notes are already atomic and well structured, so a model rewriting them would
+cost tokens, could change their wording, and couldn't be repeated exactly. `zk import` converts
+each note's fields directly, keeps its old id, dates and sources, and adds `legacy:<path>` as
+provenance. Sending the notes to a model provider is avoided entirely.
+
+`domain`, `confidence`, `status` and `related` are dropped. The new schema doesn't have them,
+every note had `status: seed` and an empty `related`, and the legacy vault is never changed, so
+they can still be looked up there.
+
+Most broken legacy links were slug drift, so link repair matters more than anything else here.
+Exact matches come first: file name, the name without its id prefix, id, title, alias. Then comes
+a word-overlap match: at least 75% of the link's words, ignoring "by", "for", "the" and the like,
+must appear in exactly one note's name, and a tie leaves the link broken. On the legacy copy that
+repaired 47 of 50 broken links, and the 4 still broken after import (one link appears twice) point
+at notes that never existed. Every repair was checked by hand and none is wrong. A held duplicate's
+incoming links are pointed at its twin, which keeps the graph connected without importing the
+same idea twice.

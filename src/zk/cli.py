@@ -16,7 +16,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from zk import capture, checks, evaluate, lookup, vault
+from zk import capture, checks, evaluate, lookup, migrate, vault
 from zk.embed import DEFAULT_MODEL, FastEmbedder, update_embeddings
 from zk.index import (
     DEFAULT_EXCLUDES,
@@ -223,6 +223,31 @@ def _start_ingest(command: str, vault_dir: Path, now: datetime) -> Path:
     return log
 
 
+def cmd_import(args: argparse.Namespace) -> int:
+    """Import a legacy vault's notes. Reads the legacy folder only; --dry-run writes nothing."""
+    if not args.legacy.is_dir():
+        sys.exit(f"zk: {args.legacy} is not a folder")
+    if args.dry_run:
+        _db(args)  # checks the vault folder exists
+        report = migrate.dry_run(args.legacy, args.vault, make_embedder(args.model), args.queries)
+        print(migrate.format_report(report, args.legacy))
+        print("dry run: nothing was written", file=sys.stderr)
+        return 0
+    conn = _open(args)
+    embedder = _embedder(args, conn)
+    try:
+        report = migrate.import_legacy(args.legacy, args.vault, conn, embedder, args.queries)
+    except (migrate.InvalidProposal, ValueError) as exc:
+        sys.exit(f"zk: import stopped, nothing written: {exc}")
+    finally:
+        conn.close()
+    print(migrate.summary(report))
+    print(f"report: {migrate.REPORTS_DIR}/ in the vault; commit: {report.commit or '-'}")
+    if report.commit_error:
+        print(f"zk: {report.commit_error}", file=sys.stderr)
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     from zk.server import create_server  # imported here so other commands start fast
 
@@ -388,6 +413,18 @@ def main(argv: list[str] | None = None) -> int:
         "that ingests the inbox); it runs with ZK_INGESTING=1 so its own session is not captured",
     )
     p_capture.set_defaults(func=cmd_capture)
+
+    p_import = sub.add_parser("import", help="import a legacy vault's notes (reads it only)")
+    p_import.add_argument(
+        "legacy", type=Path, help="the legacy vault folder, which is never changed"
+    )
+    _common(p_import)
+    _model_option(p_import)
+    p_import.add_argument("--queries", type=Path, help="a legacy query set to carry over to eval/")
+    p_import.add_argument(
+        "--dry-run", action="store_true", help="import into a throwaway copy and print the report"
+    )
+    p_import.set_defaults(func=cmd_import)
 
     p_serve = sub.add_parser("serve", help="run the read-only MCP server over stdio")
     _common(p_serve)

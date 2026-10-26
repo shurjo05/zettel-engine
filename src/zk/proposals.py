@@ -51,8 +51,19 @@ def slugify(title: str) -> str:
     return slug[:80].rstrip("-") or "note"
 
 
-def render(proposal: Proposal, now: datetime) -> tuple[str, str]:
-    """(file name, Markdown) for a proposal. Raises InvalidProposal if it isn't clean."""
+def render(
+    proposal: Proposal,
+    now: datetime,
+    *,
+    created: str | None = None,
+    updated: str | None = None,
+    name: str | None = None,
+) -> tuple[str, str]:
+    """(file name, Markdown) for a draft. Raises InvalidProposal if it isn't clean.
+
+    The id comes from `now`; `created`, `updated` (ISO dates) and the file name
+    default to today and the title's slug, and an import passes the old ones.
+    """
     p = proposal
     problems = []
     if not p.title.strip():
@@ -75,8 +86,8 @@ def render(proposal: Proposal, now: datetime) -> tuple[str, str]:
         "tags": [t.strip().lstrip("#") for t in p.tags if t.strip()],
         "aliases": [a.strip() for a in p.aliases if a.strip()],
         "sources": [s.strip() for s in p.sources if s.strip()],
-        "created": now.date().isoformat(),
-        "updated": now.date().isoformat(),
+        "created": created or now.date().isoformat(),
+        "updated": updated or created or now.date().isoformat(),
     }
     if not front["aliases"]:
         del front["aliases"]
@@ -90,11 +101,14 @@ def render(proposal: Proposal, now: datetime) -> tuple[str, str]:
     if p.links:
         parts.append(
             "## Related\n\n"
-            + "\n".join(f"- [[{name.strip()}]]: {why.strip()}" for name, why in p.links.items())
+            + "\n".join(
+                f"- [[{target.strip()}]]" + (f": {why.strip()}" if why.strip() else "")
+                for target, why in p.links.items()
+            )
         )
     text = "\n\n".join(parts) + "\n"
 
-    name = f"{slugify(p.title)}.md"
+    name = f"{name or slugify(p.title)}.md"
     issues = validate(parse_note(f"{NOTES_DIR}/{name}", text.encode("utf-8")))
     if issues:
         raise InvalidProposal("; ".join(i.message for i in issues))
