@@ -201,8 +201,8 @@ uv run zk import "C:\Obsidian\AI Second Brain\AI Brain" C:\path\to\vault --queri
   Example and the Links list become the new layout. `domain`, `confidence`, `status` and the empty
   `related` field are dropped; the old vault still has them.
 - **Duplicates are held**, exactly as in ingest. Accepted notes are imported before inbox ones, so
-  when two match it's the inbox copy that goes to `inbox/held/`. Links to a held note point at the
-  note it duplicates.
+  when two match it's the inbox copy that goes to `inbox/held/`. Links to a held note keep its
+  name and are listed as waiting on it. They resolve again if `apply_held` releases it.
 - **Links are repaired.** A link is rewritten to its note's new name, found by file name, id, title
   or alias. A drifted link (a shorter slug, an old id prefix, a missing "by" or "for") goes to the
   one note whose name holds at least 75% of its words, and only if no other note fits as well.

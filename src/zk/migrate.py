@@ -4,7 +4,8 @@ The legacy vault is only ever read. Each legacy note becomes a note in the
 current schema with its old id, dates, tags and provenance; links are rewritten
 to the new file names and, where they had drifted (a shorter slug, an old id
 prefix), repaired. A note that duplicates one imported before it is held in
-inbox/held/, like ingest does, and links to it point at the note it duplicates.
+inbox/held/, like ingest does. Links to it keep its name, so they resolve again
+if it is released with apply_held, and are reported as waiting on a held note.
 Every file in the legacy folder ends up in the report: imported, held or
 skipped, with the reason. The whole import is one git commit.
 """
@@ -16,6 +17,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -69,6 +71,7 @@ class ImportReport:
     items: list[Item] = field(default_factory=list)
     links: dict[str, int] = field(default_factory=dict)
     still_broken: list[tuple[str, str]] = field(default_factory=list)  # (new path, target)
+    to_held: list[tuple[str, str]] = field(default_factory=list)  # links to a held note
     queries: str | None = None
     commit: str | None = None
     commit_error: str | None = None
@@ -102,14 +105,15 @@ def _words(slug: str) -> set[str]:
     return {w for w in slug.split("-") if w and w not in _STOP}
 
 
-def _resolver(names: dict[str, str]) -> Callable[[str], str | None]:
+def _resolver(names: dict[str, str], ids: set[str] = frozenset()) -> Callable[[str], str | None]:
     """Map a link target to a new note name, repairing drift where it is unambiguous.
 
     Exact names, ids and titles first. Failing that, a drifted slug
     (`claude-code-skill-file-format` for `...-file-format-and-schema`,
     `3-tier-model-routing-task-complexity` for `...-routing-by-task-...`) matches
     the one note whose name holds most of its words, and only if no other note
-    does as well.
+    does as well. A drifted slug that keeps a note's id (`<id>-batch-model-calls`)
+    goes to that note when the id belongs to it alone (`ids`).
     """
     slugs = {k: _words(k) for k in names if re.fullmatch(r"[a-z0-9-]+", k)}
 
@@ -118,6 +122,8 @@ def _resolver(names: dict[str, str]) -> Callable[[str], str | None]:
         for candidate in (t, _ID_PREFIX.sub("", t), slugify(t)):
             if candidate in names:
                 return names[candidate]
+        if (m := _ID.match(t)) and m.group(1) in ids:
+            return names[m.group(1)]
         words = _words(slugify(_ID_PREFIX.sub("", t)))
         if len(words) < 2:
             return None
@@ -189,15 +195,20 @@ def plan(legacy: Path) -> list[Item]:
     return sorted(items, key=lambda i: _order(i.path))
 
 
-def _free(vault_dir: Path, rel: str, used: set[str]) -> str:
-    """A path free on disk and not yet given to another note in this run."""
-    path, n = Path(rel), 1
-    candidate = rel
-    while candidate in used or (vault_dir / candidate).exists():
+def _free(vault_dir: Path, folder: str, name: str, used: set[str]) -> str:
+    """folder/<name>.md with a name no note or held note has, on disk or in this run.
+
+    Held and accepted notes share one set of names, so a held note can later be
+    released into notes/ under the name its incoming links already use.
+    """
+    candidate, n = name, 1
+    while candidate in used or any(
+        (vault_dir / d / f"{candidate}.md").exists() for d in (NOTES_DIR, HELD_DIR)
+    ):
         n += 1
-        candidate = path.with_name(f"{path.stem}-{n}{path.suffix}").as_posix()
+        candidate = f"{name}-{n}"
     used.add(candidate)
-    return candidate
+    return f"{folder}/{candidate}.md"
 
 
 def _when(note: Note, taken: set[str], conn: sqlite3.Connection, fallback: datetime) -> datetime:
@@ -266,6 +277,7 @@ def import_legacy(
 
     # 2. Hold duplicates of an existing note or of a note imported before it.
     names: dict[str, str] = {}
+    twin_of: dict[str, str] = {}  # held name -> the note it duplicates
     kept: list[Item] = []
     used: set[str] = set()
     for item, vector in zip(notes, vectors, strict=True):
@@ -279,16 +291,19 @@ def import_legacy(
         if twin and twin[1] >= DUPLICATE_AT:
             item.status = "held"
             item.reason = f"{twin[1]:.2f} similar to {twin[0]}"
-            item.target = _free(vault_dir, f"{HELD_DIR}/{item.name}.md", used)
-            redirect = twin[0]
+            item.target = _free(vault_dir, HELD_DIR, item.name, used)
+            item.name = Path(item.target).stem
+            twin_of[item.name] = twin[0]
         else:
-            item.target = _free(vault_dir, f"{NOTES_DIR}/{item.name}.md", used)
+            item.target = _free(vault_dir, NOTES_DIR, item.name, used)
             item.name = Path(item.target).stem
             kept.append(item)
-            redirect = item.name
+        # Links keep pointing at a held note rather than its twin: a false hold
+        # would otherwise move the link's meaning to a merely similar note.
         for key in _keys(item.note):
-            names.setdefault(key, redirect)
-    resolve = _resolver(names)
+            names.setdefault(key, item.name)
+    stamps = Counter(m.group(1) for i in notes if (m := _ID.match(i.note.id or "")))
+    resolve = _resolver(names, {k for k, n in stamps.items() if n == 1})
 
     # 3. Rewrite links (in Details and the Related list) to the new names.
     legacy_links = _links(legacy, {i.path for i in notes})
@@ -333,18 +348,21 @@ def import_legacy(
         vault.write_new(vault_dir, item.target, text)
         touched.append(item.target)
     if queries is not None:
-        report.queries = _write_queries(vault_dir, queries, resolve)
+        report.queries = _write_queries(vault_dir, queries, resolve, twin_of)
         touched.append(report.queries)
 
     imported = {i.target for i in notes if i.status == "imported"}
     after = _links(vault_dir, imported)
-    report.still_broken = sorted((src, target) for src, target, ok in after if not ok)
+    unresolved = sorted((src, target) for src, target, ok in after if not ok)
+    report.to_held = [(s, t) for s, t in unresolved if t.strip() in twin_of]
+    report.still_broken = [(s, t) for s, t in unresolved if t.strip() not in twin_of]
     report.links = {
         "legacy_links": len(legacy_links),
         "legacy_broken": len(was_broken),
         **counts,
         "links_after": len(after),
         "broken_after": len(report.still_broken),
+        "to_held": len(report.to_held),
     }
 
     run = now.strftime("%Y-%m-%d-%H%M%S")
@@ -361,11 +379,19 @@ def import_legacy(
     return report
 
 
-def _write_queries(vault_dir: Path, queries: Path, resolve) -> str:
-    """Copy a legacy query set into the vault with its labels pointing at the new names."""
+def _write_queries(vault_dir: Path, queries: Path, resolve, twin_of: dict[str, str]) -> str:
+    """Copy a legacy query set into the vault with its labels pointing at the new names.
+
+    A label for a held note lists the note it duplicates as well, so the question
+    still has an answer in the index; the held name counts again once released.
+    """
     data = yaml.safe_load(queries.read_text(encoding="utf-8")) or {}
     for q in data.get("queries", []):
-        q["relevant"] = [resolve(str(label)) or str(label) for label in q.get("relevant", [])]
+        labels = []
+        for label in q.get("relevant", []):
+            new = resolve(str(label)) or str(label)
+            labels += [new, twin_of[new]] if new in twin_of else [new]
+        q["relevant"] = list(dict.fromkeys(labels))  # two old labels can meet at one note
     rel = vault.unique_path(vault_dir, EVAL_FILE)
     vault.write_new(
         vault_dir,
@@ -400,7 +426,8 @@ def summary(report: ImportReport) -> str:
         f"Links: {links.get('legacy_broken', 0)} of the legacy notes' "
         f"{links.get('legacy_links', 0)} links were broken. {links.get('repaired', 0)} were "
         f"repaired; {links.get('broken_after', 0)} of the imported notes' "
-        f"{links.get('links_after', 0)} links are still broken."
+        f"{links.get('links_after', 0)} links are still broken"
+        + (f", and {links['to_held']} point at a held note." if links.get("to_held") else ".")
     )
 
 
@@ -411,7 +438,7 @@ def format_report(report: ImportReport, legacy: Path | None = None) -> str:
     lines += summary(report).split("\n")
     for status, title in (
         ("imported", "Imported"),
-        ("held", "Held as likely duplicates (in inbox/held/; links point at the twin)"),
+        ("held", "Held as likely duplicates (in inbox/held/; apply_held releases one)"),
         ("skipped", "Skipped"),
     ):
         rows = [i for i in report.items if i.status == status]
@@ -423,6 +450,9 @@ def format_report(report: ImportReport, legacy: Path | None = None) -> str:
                 + (f": {i.reason}" if i.reason else "")
                 for i in rows
             ]
+    if report.to_held:
+        lines += ["", f"## Waiting on a held note ({len(report.to_held)})", ""]
+        lines += [f"- `{src}` -> [[{target}]]" for src, target in report.to_held]
     if report.still_broken:
         lines += ["", f"## Still broken ({len(report.still_broken)})", ""]
         lines += [f"- `{src}` -> [[{target}]]" for src, target in report.still_broken]

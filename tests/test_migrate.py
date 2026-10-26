@@ -140,3 +140,50 @@ def test_the_vault_and_legacy_folder_must_be_separate(vault, tmp_path, embedder)
     conn = open_db(tmp_path / "i.sqlite")
     with pytest.raises(ValueError, match="must not contain"):
         migrate.import_legacy(vault, vault / "notes", conn, embedder)
+
+
+def test_links_to_a_held_note_keep_its_name(legacy, target, tmp_path):
+    # A false hold must not move a link's meaning to the merely similar twin.
+    vault, conn, embedder = target
+    cache = (
+        legacy / "ai-workspace/1_atomic/patterns/20260301100000-cache-embeddings-by-content-hash.md"
+    )
+    cache.write_text(
+        cache.read_text(encoding="utf-8").replace(
+            "## Source Note",
+            "- [[20260506140002-batch-model-calls-copy]] - a copy\n\n## Source Note",
+        ),
+        encoding="utf-8",
+    )
+    queries = tmp_path / "queries.yaml"
+    queries.write_text(
+        yaml.safe_dump(
+            {
+                "queries": [
+                    {
+                        "query": "batching calls",
+                        "relevant": [
+                            "20260506140002-batch-model-calls-copy",
+                            "20260302110000-batch-model-calls-for-throughput",
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = migrate.import_legacy(legacy, vault, conn, embedder, queries)
+
+    text = (vault / "notes/cache-embeddings-by-content-hash.md").read_text(encoding="utf-8")
+    assert "- [[batch-model-calls-copy]]: a copy" in text
+    assert (vault / "inbox/held/batch-model-calls-copy.md").is_file()
+    assert report.to_held == [
+        ("notes/cache-embeddings-by-content-hash.md", "batch-model-calls-copy")
+    ]
+    assert "and 1 point at a held note" in migrate.summary(report)
+    saved = yaml.safe_load((vault / report.queries).read_text(encoding="utf-8"))
+    # The held note's twin answers the question meanwhile; the twin is listed once.
+    assert saved["queries"][0]["relevant"] == [
+        "batch-model-calls-copy",
+        "batch-model-calls-for-throughput",
+    ]

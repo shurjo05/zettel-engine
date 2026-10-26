@@ -233,6 +233,12 @@ Exact matches come first: file name, the name without its id prefix, id, title, 
 a word-overlap match: at least 75% of the link's words, ignoring "by", "for", "the" and the like,
 must appear in exactly one note's name, and a tie leaves the link broken. On the legacy copy that
 repaired 47 of 50 broken links, and the 4 still broken after import (one link appears twice) point
-at notes that never existed. Every repair was checked by hand and none is wrong. A held duplicate's
-incoming links are pointed at its twin, which keeps the graph connected without importing the
-same idea twice.
+at notes that never existed. Every repair was checked by hand and none is wrong. A drifted link
+that keeps a note's id prefix goes to that note when no other legacy note shares the id.
+
+Links to a held note keep the held note's name. Pointing them at its twin was tried first, but
+with the real model 2 of the 5 holds were notes that were only related (semantic edges against
+Leiden clustering, skill files against agent files), and the redirect moved those links' meaning to
+the wrong note. Kept as they are, the links are reported as waiting on a held note and resolve
+again if `apply_held` releases it. A carried-over test question whose answer is held lists the
+twin as well, so it still has an answer in the index.
