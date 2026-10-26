@@ -8,7 +8,8 @@ Read README.md first. Then:
   `server.py` may refresh it through `index.build_index`, and `embed.py` writes only the
   `embeddings` table. MCP tools stay read-only unless
   `--allow-writes` is given. Only `vault.py` may write vault
-  files, and it only creates new ones (never overwrites or deletes).
+  files, and it only creates or moves them (never overwrites or deletes); `ingest.py`
+  writes only through it.
 - Retrieval changes must be judged with `zk eval`; report before and after numbers in the PR.
 - Tests must use copies of `tests/fixtures/vault` (the `vault` fixture), never a real vault.
 - Fixture notes are synthetic; never commit personal vault content.

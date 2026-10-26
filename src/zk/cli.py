@@ -180,9 +180,17 @@ def cmd_serve(args: argparse.Namespace) -> int:
     from zk.server import create_server  # imported here so other commands start fast
 
     db = _db(args)
-    print(f"zk: serving {args.vault.resolve()} over stdio (read-only), index {db}", file=sys.stderr)
+    access = "with ingest tools" if args.allow_writes else "read-only"
+    print(f"zk: serving {args.vault.resolve()} over stdio ({access}), index {db}", file=sys.stderr)
     excludes = (*DEFAULT_EXCLUDES, *args.exclude)
-    create_server(args.vault, db, excludes, embedder=make_embedder(args.model)).run("stdio")
+    server = create_server(
+        args.vault,
+        db,
+        excludes,
+        embedder=make_embedder(args.model),
+        allow_writes=args.allow_writes,
+    )
+    server.run("stdio")
     return 0
 
 
@@ -308,6 +316,11 @@ def main(argv: list[str] | None = None) -> int:
     p_serve = sub.add_parser("serve", help="run the read-only MCP server over stdio")
     _common(p_serve)
     _model_option(p_serve)
+    p_serve.add_argument(
+        "--allow-writes",
+        action="store_true",
+        help="also offer the ingest tools, which create files in the vault (never overwrite)",
+    )
     p_serve.set_defaults(func=cmd_serve)
 
     args = parser.parse_args(argv)
