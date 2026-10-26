@@ -7,7 +7,8 @@ Read README.md first. Then:
   SQLite index. `search.py`, `lookup.py` and `evaluate.py` only read the index; `cli.py` and
   `server.py` may refresh it through `index.build_index`, and `embed.py` writes only the
   `embeddings` table. MCP tools stay read-only unless
-  `--allow-writes` is given. Only a future `vault.py` may write vault files.
+  `--allow-writes` is given. Only `vault.py` may write vault
+  files, and it only creates new ones (never overwrites or deletes).
 - Retrieval changes must be judged with `zk eval`; report before and after numbers in the PR.
 - Tests must use copies of `tests/fixtures/vault` (the `vault` fixture), never a real vault.
 - Fixture notes are synthetic; never commit personal vault content.

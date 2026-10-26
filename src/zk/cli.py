@@ -1,4 +1,4 @@
-"""Command-line interface: `zk index`, `zk check`, `zk search`, `zk show`, `zk eval`, `zk serve`.
+"""Command-line interface: index, check, search, show, eval, capture and serve.
 
 The CLI holds no logic of its own; it parses arguments, calls the library and
 prints the result. The MCP server (`zk serve`, zk/server.py) is a second door
@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
-from zk import evaluate, lookup
+from zk import capture, evaluate, lookup, vault
 from zk.embed import DEFAULT_MODEL, FastEmbedder, update_embeddings
 from zk.index import DEFAULT_EXCLUDES, build_index, default_db_path, health_report, open_db
 from zk.search import DEFAULT_MODE, MODES, search
@@ -137,6 +139,43 @@ def cmd_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_capture(args: argparse.Namespace) -> int:
+    """Save a session or a piece of text into the vault inbox. Never fails a hook."""
+    if not args.vault.is_dir():
+        sys.exit(f"zk: {args.vault} is not a folder")
+    now = datetime.now().astimezone()
+    captured = now.isoformat(timespec="seconds")
+    try:
+        if args.text is not None:
+            source = re.sub(r"[^a-z0-9]+", "-", (args.source or "manual").lower()).strip("-")
+            text = capture.render_text_capture(args.text, source or "manual", captured)
+            name = f"inbox/{now:%Y-%m-%d-%H%M}-{source or 'manual'}.md"
+        else:
+            if args.hook:
+                event = json.load(sys.stdin)
+                transcript = Path(event["transcript_path"])
+                session = re.sub(
+                    r"[^A-Za-z0-9-]", "", str(event.get("session_id") or transcript.stem)
+                )
+                project = Path(event["cwd"]).name if event.get("cwd") else None
+            else:
+                transcript, session, project = args.transcript, args.transcript.stem, None
+            with transcript.open(encoding="utf-8") as f:
+                turns = capture.parse_transcript(f)
+            keep, why = capture.worth_keeping(turns)
+            if not keep:
+                print(f"zk capture: skipped ({why})", file=sys.stderr)
+                return 0
+            text = capture.render_capture(turns, f"claude-code:{session}", captured, project)
+            name = f"inbox/{now:%Y-%m-%d-%H%M}-claude-{session[:8]}.md"
+        path = vault.write_new(args.vault, vault.unique_path(args.vault, name), text)
+    except Exception as exc:  # a broken capture must never break the session that triggered it
+        print(f"zk capture: failed: {exc}", file=sys.stderr)
+        return 0 if args.hook else 1
+    print(f"zk capture: saved {path}", file=sys.stderr)
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     from zk.server import create_server  # imported here so other commands start fast
 
@@ -256,6 +295,15 @@ def main(argv: list[str] | None = None) -> int:
     _model_option(p_eval)
     p_eval.add_argument("--json", action="store_true", help="machine-readable output")
     p_eval.set_defaults(func=cmd_eval)
+
+    p_capture = sub.add_parser("capture", help="save a session or text into the vault inbox")
+    p_capture.add_argument("vault", type=Path, help="path to the vault folder")
+    src = p_capture.add_mutually_exclusive_group(required=True)
+    src.add_argument("--hook", action="store_true", help="read a Claude Code hook event on stdin")
+    src.add_argument("--transcript", type=Path, help="a Claude Code transcript (.jsonl)")
+    src.add_argument("--text", help="free text to capture, e.g. from Codex or by hand")
+    p_capture.add_argument("--source", help="label for --text captures (default manual)")
+    p_capture.set_defaults(func=cmd_capture)
 
     p_serve = sub.add_parser("serve", help="run the read-only MCP server over stdio")
     _common(p_serve)

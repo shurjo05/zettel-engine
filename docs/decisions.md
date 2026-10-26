@@ -132,3 +132,17 @@ RRF uses ranks, not scores, because BM25 scores are unbounded and depend on the 
 while cosine similarities sit in [-1, 1]; normalising and weighting them would add a tuning knob
 per scale. RRF has one constant and needs no training data, which matters with a
 30-query eval set that would overfit any learned weights.
+
+## 14. Capture sessions into the inbox with a hook; no model in the capture path (2026-10-22)
+
+A Claude Code SessionEnd hook runs `zk capture --hook`, which writes the conversation (your messages
+and the assistant's text, without tool traffic) to `inbox/`. Turning captures into notes is done
+later by the agent you are already talking to, through MCP tools with a review step (M6b), rather
+than by an LLM call from the hook: that would need an API key in the core, spend tokens on every
+session including trivial ones, and write notes nobody reviewed. A cheap local filter skips sessions
+with fewer than two user messages.
+
+`zk/vault.py` is the only code that writes to the vault, and it only creates files: the content is
+written to a temporary file and hard-linked to the new name, which fails if the name exists, so a
+crash never leaves a partial file and an existing note can never be replaced. The hook always exits
+0 so a capture failure cannot disturb a Claude Code session; it reports on stderr instead.

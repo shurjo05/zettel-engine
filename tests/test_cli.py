@@ -93,3 +93,51 @@ def test_eval_compares_modes(vault, tmp_path, capsys):
     assert "== keyword ==" in out and "== semantic ==" in out
     assert main([*args, "--mode", "keyword", "--mode", "semantic", "--json"]) == 0
     assert set(json.loads(capsys.readouterr().out)) == {"keyword", "semantic"}
+
+
+TRANSCRIPT = Path(__file__).parent / "fixtures" / "transcripts" / "session.jsonl"
+
+
+def test_capture_from_a_claude_code_hook(vault, monkeypatch, capsys):
+    import io
+
+    event = {"session_id": "abcd1234-ef", "transcript_path": str(TRANSCRIPT), "cwd": "/w/myproj"}
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(event)))
+    assert main(["capture", str(vault), "--hook"]) == 0
+    saved = sorted((vault / "inbox").glob("*-claude-abcd1234.md"))
+    assert len(saved) == 1
+    text = saved[0].read_text(encoding="utf-8")
+    assert 'source: "claude-code:abcd1234-ef"' in text and 'project: "myproj"' in text
+    assert "sk-ant" not in text
+    # Captures sit in the inbox, which the index skips.
+    assert main(["index", str(vault), "--db", str(vault.parent / "i.sqlite")]) == 0
+    assert "indexed 10 notes" in capsys.readouterr().err
+
+
+def test_capture_skips_short_sessions_and_never_fails_the_hook(
+    vault, monkeypatch, capsys, tmp_path
+):
+    import io
+
+    short = tmp_path / "short.jsonl"
+    short.write_text('{"type":"user","message":{"content":"hi"}}\n', encoding="utf-8")
+    before = set((vault / "inbox").iterdir())
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"transcript_path": str(short)})))
+    assert main(["capture", str(vault), "--hook"]) == 0
+    assert "skipped" in capsys.readouterr().err
+    monkeypatch.setattr("sys.stdin", io.StringIO("not json"))
+    assert main(["capture", str(vault), "--hook"]) == 0
+    assert "failed" in capsys.readouterr().err
+    assert set((vault / "inbox").iterdir()) == before
+
+
+def test_capture_text(vault, capsys):
+    assert (
+        main(["capture", str(vault), "--text", "RRF needs ranks only.", "--source", "Codex!"]) == 0
+    )
+    assert main(["capture", str(vault), "--text", "Second idea.", "--source", "codex"]) == 0
+    saved = sorted((vault / "inbox").glob("*-codex*.md"))
+    assert len(saved) == 2  # within one minute the second gets a -2 suffix instead of overwriting
+    texts = [p.read_text(encoding="utf-8") for p in saved]
+    assert any("RRF needs ranks only." in t for t in texts)
+    assert any("Second idea." in t for t in texts)

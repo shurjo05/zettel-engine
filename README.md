@@ -15,8 +15,9 @@ rebuildable index stored outside the vault.
 | M2 | Keyword search (SQLite FTS5, BM25) and evaluation harness | done |
 | M3 | Read-only MCP server (`zk serve`) | done |
 | M4 | Semantic search with local embeddings | done |
-| M5 | Hybrid search (reciprocal rank fusion), the default mode | in progress |
-| M6-M9 | Ingestion, maintenance, evaluation | planned |
+| M5 | Hybrid search (reciprocal rank fusion), the default mode | done |
+| M6 | Ingest: session capture (M6a, in progress), proposals and review (M6b) | in progress |
+| M7-M9 | Import, maintenance, evaluation | planned |
 
 ## Setup
 
@@ -98,6 +99,44 @@ args = ["--directory", "C:\\path\\to\\zettel-engine", "run", "zk", "serve", "C:\
 Whatever a tool returns becomes part of the conversation and is sent to the client's model
 provider; see [docs/data-flow.md](docs/data-flow.md).
 
+### Capturing sessions
+
+`zk capture` saves a conversation into the vault's `inbox/` folder, where later steps turn it into
+notes. It only ever creates new files; it never changes or deletes one.
+
+```bash
+uv run zk capture path/to/vault --transcript session.jsonl   # a Claude Code transcript
+uv run zk capture path/to/vault --text "an idea" --source codex
+```
+
+From a transcript it keeps your messages and the assistant's replies and drops tool calls, tool
+output, thinking and subagents. Sessions with fewer than two of your messages are skipped, long ones
+keep their first and last 20,000 characters, and common secret formats (API keys, tokens, private
+keys, `password=...`) are replaced with `[REDACTED]`.
+
+To capture every Claude Code session automatically, add a SessionEnd hook to
+`%USERPROFILE%\.claude\settings.json` (`~/.claude/settings.json` elsewhere):
+
+```json
+{
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv --directory C:\\path\\to\\zettel-engine run zk capture C:\\path\\to\\vault --hook"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+With `--hook`, `zk capture` reads the hook's event from stdin, and if anything goes wrong it reports
+on stderr and exits 0, so a capture problem never interrupts Claude Code.
+
 ### Evaluation
 
 A query set is a YAML file of queries with the notes that should be found for each:
@@ -159,6 +198,8 @@ src/zk/embed.py   local embedding model and the vector cache in the index
 src/zk/lookup.py  one note, or its neighbours, by id, file name, path or title
 src/zk/evaluate.py  retrieval metrics over a labelled query set
 src/zk/server.py  MCP server: the same functions as read-only tools
+src/zk/capture.py  session transcripts and text into inbox captures (pure)
+src/zk/vault.py   the only writer of vault files: create-only, atomic
 src/zk/cli.py     the `zk` command
 eval/             query sets for the fixture vault
 tests/            pytest suite and a small synthetic fixture vault
