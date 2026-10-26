@@ -141,3 +141,66 @@ def test_capture_text(vault, capsys):
     texts = [p.read_text(encoding="utf-8") for p in saved]
     assert any("RRF needs ranks only." in t for t in texts)
     assert any("Second idea." in t for t in texts)
+
+
+def test_capture_then_starts_ingest_in_the_background(vault, monkeypatch, capsys, tmp_path):
+    import io
+
+    from zk import cli
+
+    started = []
+
+    class FakePopen:
+        def __init__(self, command, **kwargs):
+            started.append((command, kwargs))
+
+    monkeypatch.setattr(cli.subprocess, "Popen", FakePopen)
+    monkeypatch.setenv("ZK_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("ZK_INGESTING", raising=False)
+    event = {"session_id": "abcd1234-ef", "transcript_path": str(TRANSCRIPT)}
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(event)))
+    assert main(["capture", str(vault), "--hook", "--then", "agent --ingest"]) == 0
+    assert len(started) == 1
+    command, kwargs = started[0]
+    assert command == "agent --ingest" and kwargs["env"]["ZK_INGESTING"] == "1"
+    assert kwargs["cwd"] == vault
+    assert "started ingest" in capsys.readouterr().err
+
+
+def test_zks_own_ingest_session_is_not_captured(vault, monkeypatch, capsys):
+    import io
+
+    before = set((vault / "inbox").iterdir())
+    monkeypatch.setenv("ZK_INGESTING", "1")
+    event = {"session_id": "abcd1234-ef", "transcript_path": str(TRANSCRIPT)}
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(event)))
+    assert main(["capture", str(vault), "--hook", "--then", "agent"]) == 0
+    assert "zk's own ingest session" in capsys.readouterr().err
+    assert set((vault / "inbox").iterdir()) == before
+
+
+def test_eval_defaults_to_the_questions_saved_in_the_vault(vault, tmp_path, capsys):
+    db = ["--db", str(tmp_path / "i.sqlite")]
+    with pytest.raises(SystemExit, match="no test questions"):
+        main(["eval", str(vault), *db])
+    folder = vault / "eval" / "questions"
+    folder.mkdir(parents=True)
+    (folder / "run.yaml").write_text(
+        "queries:\n  - query: merging ranked lists\n    relevant: [reciprocal-rank-fusion]\n"
+        "    kind: generated\n",
+        encoding="utf-8",
+    )
+    assert main(["eval", str(vault), *db, "--mode", "keyword"]) == 0
+    assert "generated" in capsys.readouterr().out
+
+
+def test_check_lists_long_notes_and_near_duplicates(vault, tmp_path, capsys):
+    src = vault / "notes" / "bm25-ranking.md"
+    (vault / "notes" / "bm25-copy.md").write_text(
+        src.read_text(encoding="utf-8").replace("id: ", "id: 9", 1) + "\n" + "more words " * 300,
+        encoding="utf-8",
+    )
+    main(["check", str(vault), "--db", str(tmp_path / "i.sqlite"), "--duplicates"])
+    out = capsys.readouterr().out
+    assert "over about 512 tokens" in out and "notes/bm25-copy.md (~" in out
+    assert "near-duplicates" in out

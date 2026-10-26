@@ -9,14 +9,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
-from zk import capture, evaluate, lookup, vault
+from zk import capture, checks, evaluate, lookup, vault
 from zk.embed import DEFAULT_MODEL, FastEmbedder, update_embeddings
-from zk.index import DEFAULT_EXCLUDES, build_index, default_db_path, health_report, open_db
+from zk.index import (
+    DEFAULT_EXCLUDES,
+    build_index,
+    data_dir,
+    default_db_path,
+    health_report,
+    open_db,
+)
 from zk.search import DEFAULT_MODE, MODES, search
 
 # Builds the embedder for --model; tests swap in a stand-in that needs no download.
@@ -85,11 +94,16 @@ def cmd_index(args: argparse.Namespace) -> int:
 def cmd_check(args: argparse.Namespace) -> int:
     conn = _open(args)
     report = health_report(conn)
+    long = checks.long_notes(conn)
+    pairs = checks.near_duplicates(conn, _embedder(args, conn)) if args.duplicates else None
     conn.close()
     if args.json:
-        print(json.dumps(report.to_dict(), indent=2))
+        out = {**report.to_dict(), "long_notes": [{"path": p, "tokens": n} for p, n in long]}
+        if pairs is not None:
+            out["near_duplicates"] = [{"a": a, "b": b, "similarity": s} for a, b, s in pairs]
+        print(json.dumps(out, indent=2))
     else:
-        print(format_report(report, limit=args.limit))
+        print(format_report(report, limit=args.limit, long=long, pairs=pairs))
     return 1 if report.errors else 0
 
 
@@ -143,6 +157,9 @@ def cmd_capture(args: argparse.Namespace) -> int:
     """Save a session or a piece of text into the vault inbox. Never fails a hook."""
     if not args.vault.is_dir():
         sys.exit(f"zk: {args.vault} is not a folder")
+    if args.hook and os.environ.get(INGESTING):
+        print("zk capture: skipped (this is zk's own ingest session)", file=sys.stderr)
+        return 0
     now = datetime.now().astimezone()
     captured = now.isoformat(timespec="seconds")
     try:
@@ -173,7 +190,37 @@ def cmd_capture(args: argparse.Namespace) -> int:
         print(f"zk capture: failed: {exc}", file=sys.stderr)
         return 0 if args.hook else 1
     print(f"zk capture: saved {path}", file=sys.stderr)
+    if args.then:
+        log = _start_ingest(args.then, args.vault, now)
+        print(f"zk capture: started ingest, log {log}", file=sys.stderr)
     return 0
+
+
+INGESTING = "ZK_INGESTING"  # set for the agent `--then` starts, so its own session isn't captured
+
+
+def _start_ingest(command: str, vault_dir: Path, now: datetime) -> Path:
+    """Run `command` in the background, detached from the session that is ending."""
+    logs = data_dir() / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    log = logs / f"ingest-{now:%Y-%m-%d-%H%M%S}.log"
+    detach = (
+        {"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
+        if os.name == "nt"
+        else {"start_new_session": True}
+    )
+    with log.open("ab") as out:
+        subprocess.Popen(  # the hook's own command line, from the user's settings
+            command,
+            shell=True,
+            cwd=vault_dir,
+            env={**os.environ, INGESTING: "1"},
+            stdin=subprocess.DEVNULL,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+            **detach,
+        )
+    return log
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -195,7 +242,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
-    queries = evaluate.load_queries(args.queries)
+    if args.queries is not None:
+        queries = evaluate.load_queries(args.queries)
+    else:
+        queries = checks.load_vault_queries(args.vault)
+        if not queries:
+            sys.exit(f"zk: no query file given and no test questions in {args.vault / 'eval'}")
     modes = list(dict.fromkeys(args.mode or [DEFAULT_MODE]))
     conn = _open(args)
     embedder = _embedder(args, conn) if set(modes) - {"keyword"} else None
@@ -218,7 +270,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return 0
 
 
-def format_report(report, limit: int = 20) -> str:
+def format_report(report, limit: int = 20, long=(), pairs=None) -> str:
     def section(title: str, rows: list[str]) -> list[str]:
         if not rows:
             return []
@@ -256,6 +308,15 @@ def format_report(report, limit: int = 20) -> str:
         "ambiguous links", [f"{b['path']} -> [[{b['target']}]]" for b in report.ambiguous_links]
     )
     lines += section("orphans", report.orphans)
+    lines += section(
+        f"over about {checks.MAX_TOKENS} tokens (the end is not embedded)",
+        [f"{p} (~{n})" for p, n in long],
+    )
+    if pairs is not None:
+        lines += section(
+            f"near-duplicates (similarity >= {checks.DUPLICATE_AT})",
+            [f"{s:.2f}  {a}  ~  {b}" for a, b, s in pairs],
+        )
     return "\n".join(lines)
 
 
@@ -273,6 +334,10 @@ def main(argv: list[str] | None = None) -> int:
     _common(p_check)
     p_check.add_argument("--json", action="store_true", help="machine-readable output")
     p_check.add_argument("--limit", type=int, default=20, help="rows per list, 0 for all")
+    p_check.add_argument(
+        "--duplicates", action="store_true", help="also list near-duplicate notes (embeds them)"
+    )
+    _model_option(p_check)
     p_check.set_defaults(func=cmd_check)
 
     p_search = sub.add_parser("search", help="keyword (BM25) or semantic search over the vault")
@@ -296,7 +361,12 @@ def main(argv: list[str] | None = None) -> int:
 
     p_eval = sub.add_parser("eval", help="measure retrieval quality on a labelled query set")
     _common(p_eval)
-    p_eval.add_argument("queries", type=Path, help="YAML query set (see zk/evaluate.py)")
+    p_eval.add_argument(
+        "queries",
+        type=Path,
+        nargs="?",
+        help="YAML query set (see zk/evaluate.py); default: the questions saved in VAULT/eval/",
+    )
     p_eval.add_argument(
         "--mode", action="append", choices=MODES, help="search mode to evaluate (repeatable)"
     )
@@ -311,6 +381,12 @@ def main(argv: list[str] | None = None) -> int:
     src.add_argument("--transcript", type=Path, help="a Claude Code transcript (.jsonl)")
     src.add_argument("--text", help="free text to capture, e.g. from Codex or by hand")
     p_capture.add_argument("--source", help="label for --text captures (default manual)")
+    p_capture.add_argument(
+        "--then",
+        metavar="COMMAND",
+        help="after saving a capture, run COMMAND in the background (e.g. a headless agent "
+        "that ingests the inbox); it runs with ZK_INGESTING=1 so its own session is not captured",
+    )
     p_capture.set_defaults(func=cmd_capture)
 
     p_serve = sub.add_parser("serve", help="run the read-only MCP server over stdio")

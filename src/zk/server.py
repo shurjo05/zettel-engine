@@ -18,8 +18,10 @@ from pathlib import Path
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
+from pydantic import BaseModel, Field
 
 from zk import ingest, lookup
+from zk.checks import history_path
 from zk.embed import Embedder, update_embeddings
 from zk.index import build_index, open_db
 from zk.proposals import InvalidProposal, Proposal
@@ -34,12 +36,14 @@ and shared tags. Name notes by the id or path a tool returned. All tools are rea
 """
 
 WRITE_INSTRUCTIONS = """
-Ingest tools are enabled. To process the inbox: list_inbox, then read_capture each item. Decide
-which atomic ideas it holds (one idea per note; most captures hold zero to three). For each idea,
-search_notes and check_duplicates first; if an existing note already covers it, say so instead of
-proposing. propose_note saves a proposal and returns the rendered note and its duplicate check:
-show both to the person. Call apply_proposal only after the person approves that proposal. Use
-discard to set aside a rejected proposal, or a capture with nothing worth keeping.
+Ingest tools are enabled, and notes are written without review. To ingest a conversation or an
+inbox capture (list_inbox, then read_capture): find the atomic ideas worth finding again in a
+month (one idea per note; most conversations hold zero to three) and skip chit-chat and one-off
+debugging. For each idea, search_notes and check_duplicates first; if an existing note already
+covers it, leave it out. Then call ingest_notes once with all of them, each with one to three test
+questions it answers, worded the way someone would ask rather than copied from the note. Pass
+`capture` when the notes come from an inbox capture. Report the notes written and any warnings.
+A capture with nothing worth keeping is set aside with discard(kind="capture").
 """
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
@@ -133,11 +137,46 @@ def create_server(
         return run(lambda c: lookup.related(c, note, k=k))
 
     if allow_writes:
-        _add_ingest_tools(server, vault, run, embedder)
+
+        def refresh(conn: sqlite3.Connection) -> None:
+            build_index(conn, vault, excludes)
+            if embedder is not None:
+                update_embeddings(conn, embedder)
+
+        _add_ingest_tools(server, vault, run, embedder, refresh, history_path(db))
     return server
 
 
-def _add_ingest_tools(server: MCPServer, vault: Path, run, embedder: Embedder | None) -> None:
+class NoteDraft(BaseModel):
+    """One atomic note for ingest_notes."""
+
+    title: str = Field(description="the idea in a few words")
+    type: str = Field(description="concept, pattern, problem or decision")
+    summary: str = Field(description="one to three plain sentences that state the idea")
+    questions: list[str] = Field(
+        description="one to three questions this note answers, asked in your own words"
+    )
+    sources: list[str] = Field(
+        default_factory=list,
+        description='where the idea came from, e.g. "conversation:2026-10-26" or a URL '
+        "(the capture is added automatically)",
+    )
+    body: str = Field("", description="Markdown details, no top-level heading")
+    tags: list[str] = Field(default_factory=list)
+    aliases: list[str] = Field(default_factory=list)
+    links: dict[str, str] = Field(
+        default_factory=dict, description="existing note name -> why it is related"
+    )
+
+
+def _add_ingest_tools(
+    server: MCPServer,
+    vault: Path,
+    run,
+    embedder: Embedder | None,
+    refresh: Callable[[sqlite3.Connection], None],
+    history: Path,
+) -> None:
     def need_embedder() -> Embedder:
         if embedder is None:
             raise ToolError("duplicate checks need semantic search, which is not enabled")
@@ -156,61 +195,58 @@ def _add_ingest_tools(server: MCPServer, vault: Path, run, embedder: Embedder | 
     @server.tool(annotations=READ_ONLY, structured_output=False)
     def check_duplicates(title: str, summary: str, body: str = "") -> str:
         """Existing notes most similar to a would-be note, with cosine similarity and a verdict:
-        likely-duplicate, related or new. Use before proposing."""
+        likely-duplicate, related or new. Use before ingest_notes."""
         e = need_embedder()
         return run(lambda c: ingest.check_duplicates(c, e, title, summary, body), embed=True)
 
     @server.tool(annotations=WRITES, structured_output=False)
-    def propose_note(
-        title: str,
-        type: str,
-        summary: str,
-        sources: list[str],
-        body: str = "",
-        tags: list[str] | None = None,
-        aliases: list[str] | None = None,
-        links: dict[str, str] | None = None,
-        capture: str | None = None,
-    ) -> str:
-        """Save a proposed atomic note in inbox/proposals/ for the person to review.
+    def ingest_notes(notes: list[NoteDraft], capture: str | None = None) -> str:
+        """Write atomic notes into the vault in one run, without review.
 
-        type: concept, pattern, problem or decision. summary: one to three plain sentences that
-        state the idea. body: Markdown details (no top-level heading). sources: where the idea
-        came from, e.g. "conversation:2026-10-22" or a URL. links: existing note name -> why it
-        is related. capture: the inbox capture this came from, so applying it retires the capture.
-        Returns the proposal's name, the rendered note and the duplicate check. Nothing reaches
-        notes/ until apply_proposal.
+        Notes that pass the duplicate check go straight into notes/; a likely duplicate of an
+        existing note (or of another note in this call) is held in inbox/held/ instead. Each
+        note's questions become test questions for search. The run is one git commit, and the
+        capture, if given, moves to inbox/processed/. Returns the notes written, the held ones
+        and any warnings (search scores that dropped, notes too long, unlinked or with broken
+        links), which you should pass on to the person.
         """
         e = need_embedder()
-        proposal = Proposal(
-            title=title,
-            type=type,
-            summary=summary,
-            body=body,
-            tags=tags or [],
-            aliases=aliases or [],
-            sources=list(sources),
-            links=links or {},
+        drafts = [
+            Proposal(
+                title=n.title,
+                type=n.type,
+                summary=n.summary,
+                body=n.body,
+                tags=list(n.tags),
+                aliases=list(n.aliases),
+                sources=list(n.sources),
+                links=dict(n.links),
+                questions=list(n.questions),
+            )
+            for n in notes
+        ]
+        return run(
+            lambda c: ingest.ingest(
+                vault, c, e, drafts, capture=capture, refresh=lambda: refresh(c), history=history
+            ),
+            embed=True,
         )
-        return run(lambda c: ingest.propose(vault, c, e, proposal, capture=capture), embed=True)
 
     @server.tool(annotations=READ_ONLY, structured_output=False)
-    def list_proposals() -> str:
-        """Proposals waiting for review (name, title, type)."""
-        return run(lambda c: ingest.list_proposals(vault))
+    def list_held() -> str:
+        """Notes held back as likely duplicates (name, title, type)."""
+        return run(lambda c: ingest.list_held(vault))
 
     @server.tool(annotations=WRITES, structured_output=False)
-    def apply_proposal(name: str) -> str:
-        """Move an approved proposal into notes/ and commit it (if the vault is a git repo).
-
-        Call this only after the person has explicitly approved this proposal.
-        """
-        return run(lambda c: ingest.apply(vault, name))
+    def apply_held(name: str) -> str:
+        """Move a held note into notes/ after all and commit it. Use only when the person says
+        it is not a duplicate."""
+        return run(lambda c: ingest.apply_held(vault, name))
 
     @server.tool(annotations=WRITES, structured_output=False)
-    def discard(name: str, kind: str = "proposal") -> str:
-        """Set aside a proposal (kind "proposal", to inbox/rejected/) or a capture with nothing
+    def discard(name: str, kind: str = "held") -> str:
+        """Set aside a held note (kind "held", to inbox/rejected/) or a capture with nothing
         worth keeping (kind "capture", to inbox/processed/). Nothing is deleted."""
-        if kind not in ("proposal", "capture"):
-            raise ToolError('kind must be "proposal" or "capture"')
+        if kind not in ("held", "capture"):
+            raise ToolError('kind must be "held" or "capture"')
         return run(lambda c: {"moved_to": ingest.discard(vault, name, kind)})

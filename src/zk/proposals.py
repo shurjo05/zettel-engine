@@ -1,4 +1,4 @@
-"""Proposed notes: render structured fields into a note in the vault's schema.
+"""Note drafts: render structured fields into a note in the vault's schema.
 
 Pure functions. An agent supplies the fields (it understands the capture); this
 module decides the file name, id, frontmatter and layout, and refuses anything
@@ -17,13 +17,13 @@ import yaml
 
 from zk.notes import NOTE_TYPES, parse_note, validate
 
-PROPOSALS_DIR = "inbox/proposals"
+HELD_DIR = "inbox/held"  # drafts that looked like duplicates
 NOTES_DIR = "notes"
 
 # Cosine similarity between a proposal and an existing note (bge-small, unit
 # vectors). bge-small scores run high: a typical note's nearest neighbour sits
 # near 0.80, reworded duplicates scored 0.78-0.94 and same-topic notes 0.62-0.81,
-# so the cut favours flagging duplicates; a person reviews every proposal anyway.
+# so the cut favours flagging duplicates; a flagged draft is held, not lost.
 DUPLICATE_AT = 0.85
 RELATED_AT = 0.80
 
@@ -42,6 +42,7 @@ class Proposal:
     aliases: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
     links: dict[str, str] = field(default_factory=dict)  # note name -> why it is related
+    questions: list[str] = field(default_factory=list)  # test questions the note answers
 
 
 def slugify(title: str) -> str:

@@ -149,6 +149,8 @@ crash never leaves a partial file and an existing note can never be replaced. Th
 
 ## 15. Proposals wait in the inbox; apply is a scoped git commit (2026-10-22)
 
+*Superseded in part by decision 16: notes are no longer reviewed one by one, and proposals became held duplicates.*
+
 The agent never writes a note directly. `propose_note` takes structured fields and zk renders the
 Markdown, so every note has the same frontmatter, H1, summary and sections regardless of which model
 wrote it, and anything `zk check` would flag is refused before it is saved. Proposals live in
@@ -171,3 +173,44 @@ the 10 copies are flagged and the other 3 show as related at rank 1, while no to
 Recall wins because a person reviews every proposal and a wrong flag costs one look. The gap between
 the top hit and the second looked like a useful extra signal (at least 0.08 for 9 of 10 copies)
 but is untested on false positives, so it is left out.
+
+## 16. Ingest is automatic; a likely duplicate is held, and a run is one commit (2026-10-26)
+
+This replaces the review step in decision 15. Reviewing every note defeats the point of automatic
+capture, so `ingest_notes` writes every note that passes the duplicate check straight into
+`notes/`. Recall still beats precision at 0.85, because a flagged note is **held** in `inbox/held/`
+with a warning instead of being thrown away: a false alarm costs one look, while a missed duplicate
+is a note written twice, which wastes tokens every time both come back in search. Each draft is
+also compared with the other drafts in the same call, since one session often states an idea
+twice. The call is validated as a whole: if any note would fail `zk check`, nothing is written.
+
+A run is one git commit (its notes, questions, warnings and the retired capture), not one per note.
+The history reads as one entry per session, and `git revert` still undoes a bad run. Undoing a
+single note from a run means deleting that file by hand, which is acceptable at this size.
+
+Processing captures without being asked is opt-in through `zk capture --hook --then COMMAND`. zk
+knows nothing about which agent runs. The command is the user's own (for example a headless
+`claude -p` limited to the zk tools), which keeps the core provider-independent. `ZK_INGESTING=1`
+stops the headless session's own end from being captured again.
+
+## 17. Checks on every ingest warn and never fix (2026-10-26)
+
+Every note brings one to three test questions, so the evaluation set grows with the vault instead
+of going stale. The weakness is that the same model writes both the note and its question, so
+questions can be easier than real ones. Two things limit that. A fixed one-in-five sample, chosen
+by a hash of the question, is marked `holdout`, scored separately and never used for tuning. And
+the hand-written question sets stay the reference for any retrieval change (`zk eval` with a file).
+
+Each question is compared with its own score from when it was first saved, not with the previous
+run, so slow drift shows up too. A single question moves MRR by about 0.03 at today's size, so a
+plain threshold would cry wolf. Instead a paired bootstrap resamples the questions, and zk warns
+only when the 5th percentile of the mean drop is above zero, with at least 5 questions and a drop
+of at least 0.02. The first scores live in a JSON file next to the index. Losing it only resets
+the baselines.
+
+The health warnings cover only the notes added in that run (too long to embed, linked to nothing,
+broken links, held as duplicates). Re-reporting the 33 long legacy notes on every run would bury
+anything new; `zk check` (with `--duplicates`) shows the whole vault on demand. Note length is
+estimated at 3.7 characters per token, the average for bge-small on the legacy notes, because the
+tokenizer is only available once the model is downloaded. There's no scheduled report, and nothing
+is re-tuned automatically. Both were options Shurjo chose against.
