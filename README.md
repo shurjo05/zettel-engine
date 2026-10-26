@@ -16,7 +16,7 @@ rebuildable index stored outside the vault.
 | M3 | Read-only MCP server (`zk serve`) | done |
 | M4 | Semantic search with local embeddings | done |
 | M5 | Hybrid search (reciprocal rank fusion), the default mode | done |
-| M6 | Ingest: session capture (M6a), proposals with review (M6b) | in progress |
+| M6 | Ingest: session capture, automatic notes with duplicate check, checks that warn | done |
 | M7-M9 | Import, maintenance, evaluation | planned |
 
 ## Setup
@@ -33,6 +33,7 @@ uv run pytest
 ```bash
 uv run zk check path/to/vault          # index the vault, then print a health report
 uv run zk check path/to/vault --json   # the same report as JSON
+uv run zk check path/to/vault --duplicates   # also list near-duplicate notes (embeds them)
 uv run zk index path/to/vault          # just build or refresh the index
 uv run zk search path/to/vault "how do I merge ranked lists"   # hybrid search (the default)
 uv run zk search path/to/vault "hooks" --type pattern --tag claude-code -k 10
@@ -40,6 +41,7 @@ uv run zk search path/to/vault "older knowledge should count less" --mode semant
 uv run zk search path/to/vault "mergeable priority queue" --mode hybrid
 uv run zk show path/to/vault reciprocal-rank-fusion             # one note with its links
 uv run zk eval path/to/vault eval/fixture-queries.yaml         # Recall@k, MRR, latency
+uv run zk eval path/to/vault                                   # the questions saved by ingest
 uv run zk eval path/to/vault queries.yaml --mode keyword --mode semantic   # compare modes
 uv run zk index path/to/vault --embed                          # precompute embeddings
 uv run zk serve path/to/vault                                  # MCP server over stdio
@@ -137,24 +139,50 @@ To capture every Claude Code session automatically, add a SessionEnd hook to
 With `--hook`, `zk capture` reads the hook's event from stdin, and if anything goes wrong it reports
 on stderr and exits 0, so a capture problem never interrupts Claude Code.
 
-### Turning captures into notes
+### Turning conversations into notes
 
-Start the MCP server with `--allow-writes` to add the ingest tools: `list_inbox`, `read_capture`,
-`check_duplicates`, `propose_note`, `list_proposals`, `apply_proposal` and `discard`. Then ask the
-agent to process the inbox; [docs/process-inbox.md](docs/process-inbox.md) is a ready prompt.
-
-- `propose_note` takes structured fields (title, type, summary, details, tags, sources, links),
-  renders them in the note format, refuses anything `zk check` would flag, compares it with existing
-  notes by embedding similarity, and saves it to `inbox/proposals/`. Nothing reaches `notes/` yet.
-- `apply_proposal`, which the agent calls only after you approve, moves the note into `notes/`,
-  moves its capture to `inbox/processed/`, and, if the vault is a git repository, commits exactly
-  those files, so `git revert` undoes it. Your own uncommitted changes are left alone.
-- `discard` moves a rejected proposal to `inbox/rejected/` or an empty capture to
-  `inbox/processed/`. No tool edits or deletes an existing note.
+Start the MCP server with `--allow-writes` to add the ingest tools:
 
 ```bash
 claude mcp add zk --scope user -- uv --directory C:\path\to\zettel-engine run zk serve C:\path\to\vault --allow-writes
 ```
+
+The agent decides which ideas are worth a note. zk does the rest, with no review step:
+
+- `ingest_notes(notes, capture)` takes structured fields for each note (title, type, summary,
+  details, tags, sources, links, and one to three test questions). It renders each note in the
+  note format and refuses the whole call if any note would fail `zk check`.
+- A note at cosine similarity 0.85 or more to an existing note, or to another note in the same call,
+  is **held** in `inbox/held/` instead of written. You get a warning, and nothing is lost.
+  `apply_held` releases a held note, and `discard` sets it aside in `inbox/rejected/`.
+- Every other note goes straight into `notes/`. Its questions are saved in `eval/questions/`, and
+  the capture moves to `inbox/processed/`. The whole run is **one git commit**, so `git revert`
+  undoes it. Your own uncommitted changes are left alone.
+- Then the checks run. They **only warn**, in the tool result and in `inbox/warnings/<run>.md`.
+  Each saved test question is re-scored and compared with its score when it was added, and you're
+  warned when the drop is beyond noise. About one question in five is a held-out sample, scored
+  separately. The new notes are also checked for being too long to embed, linking to nothing,
+  or having broken links.
+
+Two ready-made commands go in `~/.claude/commands/` for Claude Code, or `~/.codex/prompts/` for
+Codex, so that `/zk-ingest` and `/zk-inbox` work in the apps too:
+
+- [docs/commands/zk-ingest.md](docs/commands/zk-ingest.md): saves what's worth keeping from the
+  current conversation. Use it where no session-end hook runs, such as Codex or the desktop apps.
+- [docs/commands/zk-inbox.md](docs/commands/zk-inbox.md): turns the captures waiting in the inbox
+  into notes.
+
+To process each captured session without being asked, let the hook start a headless agent after
+the capture is saved. This is opt-in, because every captured session then costs a short model
+run:
+
+```json
+"command": "uv --directory C:\\path\\to\\zettel-engine run zk capture C:\\path\\to\\vault --hook --then \"claude -p \\\"Process the zk inbox with the zk tools, following the zk server's instructions.\\\" --allowedTools mcp__zk\""
+```
+
+`--then` runs its command detached, logging to the zk data folder's `logs/`. It sets
+`ZK_INGESTING=1`, so the headless session's own end isn't captured again. `--allowedTools
+mcp__zk` limits that agent to the zk tools, which can only create and move files.
 
 ### Evaluation
 
@@ -169,8 +197,10 @@ queries:
 
 `zk eval` reports Recall@1/3/5/10, MRR and latency overall and per kind, and lists the queries whose
 relevant note was not in the top 10. Keep query sets about private vaults out of this repository.
+Without a query file it scores the test questions ingest saved in the vault's `eval/` folder, by
+kind (`generated`, and the `holdout` sample).
 
-`zk` only reads the vault. It skips hidden folders (`.obsidian`, `.git`) plus `inbox/**` and
+Apart from `capture` and the ingest tools, `zk` only reads the vault. It skips hidden folders (`.obsidian`, `.git`) plus `inbox/**` and
 `templates/**`; add more with `--exclude GLOB` (repeatable, vault-relative, `*` also matches `/`).
 
 The index is a single SQLite file outside the vault: `%LOCALAPPDATA%\zk\` on Windows,
@@ -219,12 +249,13 @@ src/zk/evaluate.py  retrieval metrics over a labelled query set
 src/zk/server.py  MCP server: the same functions as read-only tools
 src/zk/capture.py  session transcripts and text into inbox captures (pure)
 src/zk/vault.py   the only writer of vault files: create or move, never overwrite, atomic
-src/zk/proposals.py  render a proposed note in the schema and validate it (pure)
-src/zk/ingest.py  inbox, proposals, duplicate check and apply, writing through vault.py
+src/zk/proposals.py  render a note draft in the schema and validate it (pure)
+src/zk/ingest.py  one ingest run: duplicate check, write, questions, commit, writing through vault.py
+src/zk/checks.py  warnings after each ingest: score drops beyond noise, new-note health
 src/zk/cli.py     the `zk` command
 eval/             query sets for the fixture vault
 tests/            pytest suite and a small synthetic fixture vault
-docs/             decisions and data flow
+docs/             decisions, data flow and the /zk-ingest and /zk-inbox commands
 ```
 
 See [docs/decisions.md](docs/decisions.md) for why things are built this way and

@@ -164,7 +164,14 @@ def similar_notes(conn: sqlite3.Connection, embedder: Embedder, text: str, k: in
     """Notes closest to a piece of note text (as a document, not a query): the duplicate check."""
     if not text.strip() or k <= 0:
         return []
-    return _nearest(conn, embedder, embedder.embed_documents([text])[0], k, None, None)
+    return similar_to_vector(conn, embedder, embedder.embed_documents([text])[0], k)
+
+
+def similar_to_vector(
+    conn: sqlite3.Connection, embedder: Embedder, vector: np.ndarray, k: int = 5
+) -> list[Hit]:
+    """Notes closest to an already embedded document vector."""
+    return _nearest(conn, embedder, vector, k, None, None) if k > 0 else []
 
 
 def _nearest(

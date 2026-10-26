@@ -8,7 +8,8 @@ sends vault content somewhere new.
 | `zk index`, `zk check`, `zk search`, `zk show`, `zk eval` | Markdown files in the vault | SQLite index outside the vault | No |
 | Semantic search, `zk index --embed` (M4) | Note text from the index | Vectors in the SQLite index | No: the model runs locally. Only the model weights are downloaded, from huggingface.co, into the zk data folder |
 | `zk capture` (M6a) | A Claude Code transcript in `~/.claude/projects`, or text you pass | A new file in the vault's `inbox/`, with common secrets redacted | No |
-| `zk serve --allow-writes` (M6b) | Inbox captures, proposals and the index | New files in `inbox/proposals/`, `notes/`, `inbox/processed/` and `inbox/rejected/`; git commits in the vault repo | Yes: captures and proposals the agent reads are sent to the client's model provider, like any tool result. A Claude Code capture read from Codex goes to OpenAI |
+| `zk serve --allow-writes`: ingest (M6) | Inbox captures and the index | New files in `notes/`, `inbox/held/`, `inbox/processed/`, `inbox/rejected/`, `inbox/warnings/` and `eval/questions/` (test questions, which quote your topics); one git commit per run in the vault repo; score history as JSON next to the SQLite index | Yes: captures the agent reads are sent to the client's model provider, like any tool result. A Claude Code capture read from Codex goes to OpenAI. Notes are written by that model from what it read |
+| `zk capture --then COMMAND` (M6, opt-in) | The capture it just saved | A log in the zk data folder's `logs/` | Yes, through COMMAND: a headless agent such as `claude -p` reads the inbox through the zk tools and sends it to its model provider, as above |
 | `zk serve` (MCP, M3) | The vault (to refresh the index) and the index | SQLite index outside the vault | Yes, the parts an agent asks for: see below |
 
 ### MCP server

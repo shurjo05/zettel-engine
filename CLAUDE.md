@@ -9,7 +9,8 @@ Read README.md first. Then:
   `embeddings` table. MCP tools stay read-only unless
   `--allow-writes` is given. Only `vault.py` may write vault
   files, and it only creates or moves them (never overwrites or deletes); `ingest.py`
-  writes only through it.
+  writes only through it. `checks.py` reads the vault and the index and writes only the score
+  history file next to the index.
 - Retrieval changes must be judged with `zk eval`; report before and after numbers in the PR.
 - Tests must use copies of `tests/fixtures/vault` (the `vault` fixture), never a real vault.
 - Fixture notes are synthetic; never commit personal vault content.
