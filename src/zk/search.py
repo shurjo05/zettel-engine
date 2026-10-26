@@ -157,6 +157,24 @@ def semantic_search(
     """
     if not query.strip() or k <= 0:
         return []
+    return _nearest(conn, embedder, embedder.embed_query(query), k, type, tag)
+
+
+def similar_notes(conn: sqlite3.Connection, embedder: Embedder, text: str, k: int = 5) -> list[Hit]:
+    """Notes closest to a piece of note text (as a document, not a query): the duplicate check."""
+    if not text.strip() or k <= 0:
+        return []
+    return _nearest(conn, embedder, embedder.embed_documents([text])[0], k, None, None)
+
+
+def _nearest(
+    conn: sqlite3.Connection,
+    embedder: Embedder,
+    vector: np.ndarray,
+    k: int,
+    type: str | None,
+    tag: str | None,
+) -> list[Hit]:
     where, params = _filters(type, tag)
     rows = conn.execute(
         "SELECT n.path, n.id, n.title, n.type, n.summary, e.vector FROM notes n "
@@ -167,7 +185,7 @@ def semantic_search(
     if not rows:
         return []
     matrix = np.stack([np.frombuffer(r["vector"], dtype=np.float32) for r in rows])
-    scores = matrix @ embedder.embed_query(query)
+    scores = matrix @ vector
     # Highest score first; ties broken by path so results are reproducible.
     order = sorted(range(len(rows)), key=lambda i: (-scores[i], rows[i]["path"]))[:k]
     return [

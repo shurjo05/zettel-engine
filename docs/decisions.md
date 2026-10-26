@@ -146,3 +146,28 @@ with fewer than two user messages.
 written to a temporary file and hard-linked to the new name, which fails if the name exists, so a
 crash never leaves a partial file and an existing note can never be replaced. The hook always exits
 0 so a capture failure cannot disturb a Claude Code session; it reports on stderr instead.
+
+## 15. Proposals wait in the inbox; apply is a scoped git commit (2026-10-22)
+
+The agent never writes a note directly. `propose_note` takes structured fields and zk renders the
+Markdown, so every note has the same frontmatter, H1, summary and sections regardless of which model
+wrote it, and anything `zk check` would flag is refused before it is saved. Proposals live in
+`inbox/proposals/`, which the index skips, so drafts never show up in search or mix with notes.
+`apply_proposal` exists only behind `--allow-writes`, and its description tells the agent to call
+it only after the person approves; the person can also read and edit proposals in Obsidian first.
+
+Applying commits exactly the files it touched (`git commit --only`), so a note can be reverted on its
+own and changes the person has not committed are never swept in. Editing existing notes is left out
+for now: every tool creates or moves files, which keeps the worst case of a confused agent to an
+unwanted new file.
+
+The duplicate verdict thresholds are cosine 0.85 for likely duplicate and 0.80 for related,
+calibrated on the legacy notes. bge-small similarities run high: the median note's nearest
+neighbour is 0.80, and 143 pairs score at least 0.75, so the starting values (0.90 and 0.75) would
+call almost every note related while missing most duplicates. Ten hand-reworded copies of real
+notes scored 0.78 to 0.94 (median 0.86) and ranked their original first every time; ten pairs that
+only share a topic scored 0.62 to 0.81. The ranges overlap, so no cut is clean. At 0.85 / 0.80, 7 of
+the 10 copies are flagged and the other 3 show as related at rank 1, while no topic pair is flagged.
+Recall wins because a person reviews every proposal and a wrong flag costs one look. The gap between
+the top hit and the second looked like a useful extra signal (at least 0.08 for 9 of 10 copies)
+but is untested on false positives, so it is left out.
