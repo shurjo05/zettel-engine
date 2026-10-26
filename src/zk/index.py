@@ -304,6 +304,7 @@ class Report:
     duplicate_ids: dict[str, list[str]] = field(default_factory=dict)
     broken_links: list[dict] = field(default_factory=list)
     ambiguous_links: list[dict] = field(default_factory=list)
+    waiting_links: list[dict] = field(default_factory=list)  # to a held note; set by the caller
     orphans: list[str] = field(default_factory=list)
     no_outgoing: list[str] = field(default_factory=list)
 

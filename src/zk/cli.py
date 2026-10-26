@@ -94,6 +94,9 @@ def cmd_index(args: argparse.Namespace) -> int:
 def cmd_check(args: argparse.Namespace) -> int:
     conn = _open(args)
     report = health_report(conn)
+    report.waiting_links, report.broken_links = checks.split_waiting(
+        args.vault, report.broken_links
+    )
     long = checks.long_notes(conn)
     pairs = checks.near_duplicates(conn, _embedder(args, conn)) if args.duplicates else None
     conn.close()
@@ -309,7 +312,9 @@ def format_report(report, limit: int = 20, long=(), pairs=None) -> str:
     lines = [
         f"notes: {report.notes} ({types})",
         f"links: {report.links} ({len(report.broken_links)} broken, "
-        f"{len(report.ambiguous_links)} ambiguous)",
+        f"{len(report.ambiguous_links)} ambiguous"
+        + (f", {len(report.waiting_links)} waiting on a held note" if report.waiting_links else "")
+        + ")",
         f"orphans (no inbound links): {len(report.orphans)}",
         f"no outgoing links: {len(report.no_outgoing)}",
         f"errors: {report.errors}   warnings: {report.warnings}",
@@ -328,6 +333,10 @@ def format_report(report, limit: int = 20, long=(), pairs=None) -> str:
     )
     lines += section(
         "broken links", [f"{b['path']} -> [[{b['target']}]]" for b in report.broken_links]
+    )
+    lines += section(
+        "waiting on a held note (they resolve if apply_held releases it)",
+        [f"{b['path']} -> [[{b['target']}]]" for b in report.waiting_links],
     )
     lines += section(
         "ambiguous links", [f"{b['path']} -> [[{b['target']}]]" for b in report.ambiguous_links]

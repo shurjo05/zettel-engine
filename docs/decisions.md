@@ -241,4 +241,12 @@ with the real model 2 of the 5 holds were notes that were only related (semantic
 Leiden clustering, skill files against agent files), and the redirect moved those links' meaning to
 the wrong note. Kept as they are, the links are reported as waiting on a held note and resolve
 again if `apply_held` releases it. A carried-over test question whose answer is held lists the
-twin as well, so it still has an answer in the index.
+twin as well, so it still has an answer in the index. `zk check` lists these links apart from broken
+ones.
+
+Measured with bge-small on a copy of the legacy vault: 91 imported, 5 held, 34 skipped; 47 of the
+50 broken links repaired, 4 still broken and 15 waiting on a held note. The legacy test set's MRR,
+before (119 legacy notes) and after (91 imported), was 0.81 to 0.85 for keyword search, 0.88 to 0.93
+for semantic search and 0.88 to 0.93 for hybrid search. On the paraphrase questions only it was
+0.68 to 0.76, 0.83 to 0.88 and 0.81 to 0.89. No question got worse in any mode. Most of the gain
+comes from the cleaner corpus: skipped maps and system docs no longer compete with notes.

@@ -14,6 +14,16 @@ def test_check_prints_report_and_fails_on_errors(vault, tmp_path, capsys):
     assert "notes/embeddings.md -> [[hnsw-index]]" in out
 
 
+def test_check_lists_links_to_held_notes_apart(vault, tmp_path, capsys):
+    (vault / "inbox" / "held").mkdir(parents=True, exist_ok=True)
+    (vault / "inbox" / "held" / "hnsw-index.md").write_text("# HNSW\n", encoding="utf-8")
+    main(["check", str(vault), "--db", str(tmp_path / "i.sqlite")])
+    out = capsys.readouterr().out
+    assert "1 waiting on a held note" in out
+    assert "waiting on a held note (they resolve" in out
+    assert "(0 broken" in out and "broken links (" not in out
+
+
 def test_check_json(vault, tmp_path, capsys):
     main(["check", str(vault), "--db", str(tmp_path / "i.sqlite"), "--json"])
     data = json.loads(capsys.readouterr().out)
