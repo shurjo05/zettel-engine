@@ -17,7 +17,8 @@ import yaml
 NOTE_TYPES = ("concept", "pattern", "problem", "decision")
 
 _FENCE = re.compile(r"^\s*(```|~~~)")
-_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+# A closing run of #s only counts after a space, so "# Events in C#" keeps its "#".
+_HEADING = re.compile(r"^(#{1,6})\s+(.*?)(?:\s+#+)?\s*$")
 _INLINE_CODE = re.compile(r"`[^`\n]*`")
 # [[target]], [[target|label]], [[target#heading]], [[target#heading|label]]
 _WIKILINK = re.compile(r"\[\[([^\[\]|#]*)(?:#([^\[\]|]*))?(?:\|([^\[\]]*))?\]\]")

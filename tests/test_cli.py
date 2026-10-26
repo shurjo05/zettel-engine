@@ -14,6 +14,16 @@ def test_check_prints_report_and_fails_on_errors(vault, tmp_path, capsys):
     assert "notes/embeddings.md -> [[hnsw-index]]" in out
 
 
+def test_check_lists_links_to_held_notes_apart(vault, tmp_path, capsys):
+    (vault / "inbox" / "held").mkdir(parents=True, exist_ok=True)
+    (vault / "inbox" / "held" / "hnsw-index.md").write_text("# HNSW\n", encoding="utf-8")
+    main(["check", str(vault), "--db", str(tmp_path / "i.sqlite")])
+    out = capsys.readouterr().out
+    assert "1 waiting on a held note" in out
+    assert "waiting on a held note (they resolve" in out
+    assert "(0 broken" in out and "broken links (" not in out
+
+
 def test_check_json(vault, tmp_path, capsys):
     main(["check", str(vault), "--db", str(tmp_path / "i.sqlite"), "--json"])
     data = json.loads(capsys.readouterr().out)
@@ -204,3 +214,15 @@ def test_check_lists_long_notes_and_near_duplicates(vault, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "over about 512 tokens" in out and "notes/bm25-copy.md (~" in out
     assert "near-duplicates" in out
+
+
+def test_import_dry_run_then_import(vault, tmp_path, capsys):
+    legacy = Path(__file__).parent / "fixtures" / "legacy"
+    db = ["--db", str(tmp_path / "i.sqlite")]
+    assert main(["import", str(legacy), str(vault), *db, "--dry-run"]) == 0
+    out = capsys.readouterr()
+    assert "8 legacy files: 3 imported, 1 held" in out.out and "nothing was written" in out.err
+    assert not (vault / "notes" / "cache-embeddings-by-content-hash.md").exists()
+    assert main(["import", str(legacy), str(vault), *db]) == 0
+    assert "3 imported" in capsys.readouterr().out
+    assert (vault / "notes" / "cache-embeddings-by-content-hash.md").is_file()

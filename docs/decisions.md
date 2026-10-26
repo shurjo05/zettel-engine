@@ -214,3 +214,39 @@ anything new; `zk check` (with `--duplicates`) shows the whole vault on demand. 
 estimated at 3.7 characters per token, the average for bge-small on the legacy notes, because the
 tokenizer is only available once the model is downloaded. There's no scheduled report, and nothing
 is re-tuned automatically. Both were options Shurjo chose against.
+
+## 18. Legacy notes are imported by code, not by an agent (2026-10-26)
+
+The plan said the old notes would go "through the M6 pipeline". The deterministic half of it is
+used here: the schema renderer, the duplicate check at 0.85, held notes and one commit. The agent
+half isn't. The legacy notes are already atomic and well structured, so a model rewriting them would
+cost tokens, could change their wording, and couldn't be repeated exactly. `zk import` converts
+each note's fields directly, keeps its old id, dates and sources, and adds `legacy:<path>` as
+provenance. Sending the notes to a model provider is avoided entirely.
+
+`domain`, `confidence`, `status` and `related` are dropped. The new schema doesn't have them,
+every note had `status: seed` and an empty `related`, and the legacy vault is never changed, so
+they can still be looked up there.
+
+Most broken legacy links were slug drift, so link repair matters more than anything else here.
+Exact matches come first: file name, the name without its id prefix, id, title, alias. Then comes
+a word-overlap match: at least 75% of the link's words, ignoring "by", "for", "the" and the like,
+must appear in exactly one note's name, and a tie leaves the link broken. On the legacy copy that
+repaired 47 of 50 broken links, and the 4 still broken after import (one link appears twice) point
+at notes that never existed. Every repair was checked by hand and none is wrong. A drifted link
+that keeps a note's id prefix goes to that note when no other legacy note shares the id.
+
+Links to a held note keep the held note's name. Pointing them at its twin was tried first, but
+with the real model 2 of the 5 holds were notes that were only related (semantic edges against
+Leiden clustering, skill files against agent files), and the redirect moved those links' meaning to
+the wrong note. Kept as they are, the links are reported as waiting on a held note and resolve
+again if `apply_held` releases it. A carried-over test question whose answer is held lists the
+twin as well, so it still has an answer in the index. `zk check` lists these links apart from broken
+ones.
+
+Measured with bge-small on a copy of the legacy vault: 91 imported, 5 held, 34 skipped; 47 of the
+50 broken links repaired, 4 still broken and 15 waiting on a held note. The legacy test set's MRR,
+before (119 legacy notes) and after (91 imported), was 0.81 to 0.85 for keyword search, 0.88 to 0.93
+for semantic search and 0.88 to 0.93 for hybrid search. On the paraphrase questions only it was
+0.68 to 0.76, 0.83 to 0.88 and 0.81 to 0.89. No question got worse in any mode. Most of the gain
+comes from the cleaner corpus: skipped maps and system docs no longer compete with notes.
