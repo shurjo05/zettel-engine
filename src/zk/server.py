@@ -20,7 +20,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
-from zk import ingest, lookup
+from zk import ingest, lookup, resolve
 from zk.checks import history_path
 from zk.embed import Embedder, update_embeddings
 from zk.index import build_index, open_db
@@ -44,6 +44,12 @@ covers it, leave it out. Then call ingest_notes once with all of them, each with
 questions it answers, worded the way someone would ask rather than copied from the note. Pass
 `capture` when the notes come from an inbox capture. Report the notes written and any warnings.
 A capture with nothing worth keeping is set aside with discard(kind="capture").
+
+Notes held as likely duplicates are resolved one at a time: list_held, then get_held_pair. If the
+held note states the same idea as the closest note (a reworded or narrower version of it), call
+merge_held with a merged note that keeps everything the existing note says and adds only what the
+held note says beyond it. If it is a different idea that is merely related, call apply_held. Give
+the reason either way.
 """
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
@@ -169,6 +175,24 @@ class NoteDraft(BaseModel):
     )
 
 
+class MergedNote(BaseModel):
+    """The note that results from merging a held duplicate into an existing note."""
+
+    title: str = Field(description="usually the existing note's title")
+    type: str = Field(description="concept, pattern, problem or decision")
+    summary: str = Field(description="one to three plain sentences that state the idea")
+    body: str = Field(
+        "",
+        description="Markdown details, no top-level heading: the existing note's details plus "
+        "anything only the held note says; drop nothing the existing note says",
+    )
+    tags: list[str] = Field(default_factory=list)
+    aliases: list[str] = Field(default_factory=list)
+    links: dict[str, str] = Field(
+        default_factory=dict, description="note name -> why it is related, from both notes"
+    )
+
+
 def _add_ingest_tools(
     server: MCPServer,
     vault: Path,
@@ -238,10 +262,44 @@ def _add_ingest_tools(
         return run(lambda c: ingest.list_held(vault))
 
     @server.tool(annotations=WRITES, structured_output=False)
-    def apply_held(name: str) -> str:
-        """Move a held note into notes/ after all and commit it. Use only when the person says
-        it is not a duplicate."""
-        return run(lambda c: ingest.apply_held(vault, name))
+    def apply_held(name: str, reason: str = "") -> str:
+        """Move a held note into notes/ after all and commit it: it is related to the note it
+        resembles, not the same idea. Say why in `reason`; it goes in the commit message."""
+        return run(lambda c: ingest.apply_held(vault, name, reason))
+
+    @server.tool(annotations=READ_ONLY, structured_output=False)
+    def get_held_pair(name: str) -> str:
+        """A held note's full text next to the full text of the existing note closest to it,
+        with their similarity, plus the next closest notes. Use it to judge whether they are the
+        same idea (merge_held) or only related (apply_held)."""
+        e = need_embedder()
+        return run(lambda c: resolve.held_pair(vault, c, e, name), embed=True)
+
+    @server.tool(annotations=WRITES, structured_output=False)
+    def merge_held(name: str, into: str, note: MergedNote, reason: str) -> str:
+        """Merge a held note into the existing note it duplicates, as one git commit.
+
+        `into` is the existing note's path. `note` is the merged note you wrote from both; it
+        keeps the existing note's id, file name and created date, and gains the held note's
+        sources. Links and test questions that named the held note are pointed at the merged
+        note, and the held file moves to inbox/merged/. `reason` says in a sentence why the two
+        are the same idea. Fails, writing nothing, if a file changed while merging.
+        """
+        draft = Proposal(
+            title=note.title,
+            type=note.type,
+            summary=note.summary,
+            body=note.body,
+            tags=list(note.tags),
+            aliases=list(note.aliases),
+            links=dict(note.links),
+        )
+        return run(
+            lambda c: resolve.merge_held(
+                vault, c, name, into, draft, reason, refresh=lambda: refresh(c)
+            ),
+            embed=True,
+        )
 
     @server.tool(annotations=WRITES, structured_output=False)
     def discard(name: str, kind: str = "held") -> str:

@@ -250,3 +250,33 @@ before (119 legacy notes) and after (91 imported), was 0.81 to 0.85 for keyword 
 for semantic search and 0.88 to 0.93 for hybrid search. On the paraphrase questions only it was
 0.68 to 0.76, 0.83 to 0.88 and 0.81 to 0.89. No question got worse in any mode. Most of the gain
 comes from the cleaner corpus: skipped maps and system docs no longer compete with notes.
+
+## 19. A model judges held pairs; merging is the one write that changes a note (2026-11-02)
+
+Similarity can't separate a duplicate from a closely related note: reworded duplicates and
+same-topic pairs overlap between 0.78 and 0.81, and with the real model 2 of the 5 legacy holds
+were only related. Shurjo asked for a stronger reasoning model to settle held pairs regularly
+instead of a person. As in ingest, the model judges and code writes. `get_held_pair` shows both
+notes in full, and the model chooses `apply_held` (related) or `merge_held` (same idea), with a
+reason that goes into the commit message.
+
+A merge has to change an existing note, which nothing did before. `vault.replace` is the only write
+that does. It is atomic (a temporary file, then `os.replace`) and refuses unless the file still has
+the content hash the caller read, so an edit made meanwhile, in Obsidian for example, is never
+overwritten. A merge checks every file it will touch before writing any of them. The merged note
+keeps the existing note's id, name and created date, so links to it and its eval labels stay
+valid. Links and question labels that named the held note are rewritten rather than resolved by
+alias, because Obsidian doesn't resolve links by alias and would offer to create the missing note.
+The held file is moved to `inbox/merged/`, nothing is deleted, and git keeps the old text, so one
+`git revert` undoes a merge.
+
+Running it is left to the agent: the `/zk-resolve` command, by hand or from a scheduled headless
+run with the strongest model, rather than an API client in zk. That keeps the core
+provider-independent and adds no dependency or API key. It also means each held note and its
+closest note are sent to that model's provider, which docs/data-flow.md records.
+
+Fixed alongside: on a freshly created index, `PRAGMA foreign_keys = ON` ran inside the reset's
+transaction, where SQLite ignores it. A note changed later in that session kept its old links and
+issues next to the new ones until the index was reopened. This mattered most for the long-lived
+MCP server.
+

@@ -155,7 +155,8 @@ The agent decides which ideas are worth a note. zk does the rest, with no review
   note format and refuses the whole call if any note would fail `zk check`.
 - A note at cosine similarity 0.85 or more to an existing note, or to another note in the same call,
   is **held** in `inbox/held/` instead of written. You get a warning, and nothing is lost.
-  `apply_held` releases a held note, and `discard` sets it aside in `inbox/rejected/`.
+  `apply_held` releases a held note, `merge_held` merges it into the note it duplicates (see
+  below), and `discard` sets it aside in `inbox/rejected/`.
 - Every other note goes straight into `notes/`. Its questions are saved in `eval/questions/`, and
   the capture moves to `inbox/processed/`. The whole run is **one git commit**, so `git revert`
   undoes it. Your own uncommitted changes are left alone.
@@ -183,7 +184,35 @@ run:
 
 `--then` runs its command detached, logging to the zk data folder's `logs/`. It sets
 `ZK_INGESTING=1`, so the headless session's own end isn't captured again. `--allowedTools
-mcp__zk` limits that agent to the zk tools, which can only create and move files.
+mcp__zk` limits that agent to the zk tools, which create and move files and change a note only
+by merging a held duplicate into it.
+
+### Resolving held duplicates
+
+A held note is either the same idea as an existing note or only related to it, and similarity
+alone can't tell which: on the legacy notes, 2 of 5 holds were only related. A model reads each
+pair and decides, and zk does the writing:
+
+- `get_held_pair(name)` returns the held note and its closest existing note in full, with the
+  next closest notes.
+- **Related**: `apply_held(name, reason)` moves it into `notes/`. Links to it start resolving.
+- **Same idea**: `merge_held(name, into, note, reason)` rewrites the existing note from the merged
+  draft the model writes. The note keeps its id, file name and created date, and gains the held
+  note's sources and title (as an alias). Links and test questions that named the held note are
+  pointed at it, and the held file moves to `inbox/merged/`. It is all one git commit, with the
+  reason in the message, so `git revert` undoes a bad merge. If any file changed while merging,
+  nothing is written.
+
+[docs/commands/zk-resolve.md](docs/commands/zk-resolve.md) is the `/zk-resolve` command. Run it
+with your strongest model, by hand or on a schedule. For example, daily with Windows Task
+Scheduler:
+
+```bat
+schtasks /Create /TN "zk resolve" /SC DAILY /ST 21:00 /TR "claude -p \"Resolve the notes held in the zk inbox with the zk tools, following the zk server's instructions.\" --model opus --allowedTools mcp__zk"
+```
+
+Each run sends the held notes and their closest notes to the model's provider (see
+[docs/data-flow.md](docs/data-flow.md)).
 
 ### Importing a legacy vault
 
@@ -283,7 +312,7 @@ src/zk/migrate.py  import a legacy vault: convert, hold duplicates, repair links
 src/zk/cli.py     the `zk` command
 eval/             query sets for the fixture vault
 tests/            pytest suite and a small synthetic fixture vault
-docs/             decisions, data flow and the /zk-ingest and /zk-inbox commands
+docs/             decisions, data flow and the /zk-ingest, /zk-inbox and /zk-resolve commands
 ```
 
 See [docs/decisions.md](docs/decisions.md) for why things are built this way and

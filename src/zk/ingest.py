@@ -247,7 +247,7 @@ def _commit(vault_dir: Path, paths: list[str], message: str) -> dict:
         return {"commit": None, "commit_error": f"written but not committed: {detail.strip()}"}
 
 
-def apply_held(vault_dir: Path, name: str) -> dict:
+def apply_held(vault_dir: Path, name: str, reason: str = "") -> dict:
     """Move a held note into notes/ after all (it was not a duplicate) and commit it."""
     name = _check_name(name)
     src = f"{HELD_DIR}/{name}"
@@ -257,7 +257,10 @@ def apply_held(vault_dir: Path, name: str) -> dict:
     dst = vault.unique_path(vault_dir, f"{NOTES_DIR}/{name}")
     vault.move_new(vault_dir, src, dst)
     result = {"note": dst}
-    result.update(_commit(vault_dir, [src, dst], f"zk: add held note {front.get('title') or name}"))
+    message = f"zk: add held note {front.get('title') or name}"
+    if reason.strip():
+        message += "\n\n" + " ".join(reason.split())
+    result.update(_commit(vault_dir, [src, dst], message))
     return result
 
 
