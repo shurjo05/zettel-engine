@@ -31,7 +31,8 @@ The saturation means the tenth mention of a word adds little.
 @pytest.fixture
 def setup(vault, tmp_path, embedder):
     (vault / "inbox" / "held").mkdir(parents=True)
-    (vault / "inbox" / "held" / "okapi-scoring.md").write_text(HELD, encoding="utf-8")
+    # Bytes, so Windows doesn't turn the newlines into CRLF (vaults use LF).
+    (vault / "inbox" / "held" / "okapi-scoring.md").write_bytes(HELD.encode("utf-8"))
     # A note linking to the held one, and a test question answered by it.
     (vault / "notes" / "embeddings.md").write_text(
         (vault / "notes" / "embeddings.md").read_text(encoding="utf-8")
@@ -131,7 +132,7 @@ def test_merge_refuses_bad_input(setup):
 
 
 def test_replace_needs_the_content_it_read(tmp_path):
-    (tmp_path / "a.md").write_text("one\n", encoding="utf-8")
+    (tmp_path / "a.md").write_bytes(b"one\n")
     with pytest.raises(vault.VaultWriteError, match="changed since"):
         vault.replace(tmp_path, "a.md", "two\n", "0" * 64)
     with pytest.raises(vault.VaultWriteError, match="does not exist"):
@@ -139,7 +140,7 @@ def test_replace_needs_the_content_it_read(tmp_path):
     from zk.notes import content_hash
 
     vault.replace(tmp_path, "a.md", "two\n", content_hash(b"one\n"))
-    assert (tmp_path / "a.md").read_text(encoding="utf-8") == "two\n"
+    assert (tmp_path / "a.md").read_bytes() == b"two\n"
 
 
 def test_merge_and_release_are_one_commit_each(setup):
