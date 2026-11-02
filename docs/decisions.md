@@ -275,6 +275,15 @@ run with the strongest model, rather than an API client in zk. That keeps the co
 provider-independent and adds no dependency or API key. It also means each held note and its
 closest note are sent to that model's provider, which docs/data-flow.md records.
 
+On the 5 legacy holds (bge-small, with Claude as the judge) the verdicts matched a careful
+reading: 3 merged and 2 released. No line of an existing note was lost, and every number, code
+block and link from the held notes was kept. `zk check` went from 15 links waiting on a held note
+to 0, orphans from 23 to 20 and notes without outgoing links from 2 to 0. `zk eval` MRR was
+unchanged in every mode. All three merged notes ended up over 512 tokens, with the merged-in text
+last, where search by meaning doesn't read it. So the tool and the command now ask for the held
+note's point in the summary and a note under about 400 words, and a merge that comes out longer
+returns a warning. Chunking long notes is still the general fix.
+
 Fixed alongside: on a freshly created index, `PRAGMA foreign_keys = ON` ran inside the reset's
 transaction, where SQLite ignores it. A note changed later in that session kept its old links and
 issues next to the new ones until the index was reopened. This mattered most for the long-lived

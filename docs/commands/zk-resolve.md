@@ -10,6 +10,8 @@ anything along the way. I only want to hear what you decided for each one and wh
    - **Same idea**: the held note restates the existing one, or is a narrower or reworded version
      of it. Call `merge_held` with `into` set to the existing note's path and a merged note that
      keeps everything the existing note says and adds only what the held note says beyond it.
+     Weave that in where it belongs rather than appending it, put its main point in the summary,
+     and keep the note under about 400 words: search by meaning reads only the first 512 tokens.
      Keep the existing note's title unless the held one is clearly better.
    - **Related, not the same**: the two share a topic but make different claims, or one is a
      method and the other its use. Call `apply_held`.

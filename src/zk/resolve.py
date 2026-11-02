@@ -16,9 +16,12 @@ import re
 import sqlite3
 from collections.abc import Callable
 from datetime import datetime
+from itertools import takewhile
 from pathlib import Path
 
-from zk import vault
+import yaml
+
+from zk import checks, vault
 from zk.embed import Embedder, note_text
 from zk.ingest import _check_name, _commit
 from zk.notes import content_hash, parse_note
@@ -84,12 +87,28 @@ def _retarget_links(text: str, old: str, new: str) -> str:
 
 
 def _retarget_labels(text: str, old: str, new: str) -> str:
-    """Rename an answer label in a YAML question file, leaving the questions' own wording alone."""
+    """Rename an answer label in a YAML question file, leaving the questions' own wording alone.
+
+    The text is edited in place, which keeps comments and layout. Only when a
+    question then lists the same answer twice is the file re-dumped, keeping
+    its leading comment lines.
+    """
     pattern = _label_pattern(old)
-    return "".join(
+    out = "".join(
         line if re.match(r"\s*-?\s*query\s*:", line) else pattern.sub(new, line)
         for line in text.splitlines(keepends=True)
     )
+    if out == text:
+        return text
+    data = yaml.safe_load(out) or {}
+    queries = data.get("queries", []) if isinstance(data, dict) else []
+    repeated = [q for q in queries if len(set(q.get("relevant", []))) < len(q.get("relevant", []))]
+    if not repeated:
+        return out
+    for q in repeated:
+        q["relevant"] = list(dict.fromkeys(q["relevant"]))
+    lead = "".join(takewhile(lambda line: line.startswith("#"), out.splitlines(keepends=True)))
+    return lead + yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
 
 
 def merge_held(
@@ -191,6 +210,13 @@ def merge_held(
         "links_retargeted": [rel for rel, _, _ in writes[1:] if not rel.startswith(EVAL_DIR)],
         "question_files_updated": [rel for rel, _, _ in writes if rel.startswith(f"{EVAL_DIR}/")],
     }
+    tokens = checks.estimate_tokens(note_text(draft.title, f"{draft.summary}\n\n{draft.body}"))
+    if tokens > checks.MAX_TOKENS:
+        result["warning"] = (
+            f"{into} is now about {tokens} tokens, over the {checks.MAX_TOKENS} the embedding "
+            "model reads, so its end is invisible to search by meaning. Put the held note's "
+            "distinct point in the summary, or tighten the note."
+        )
     message = f"zk: merge held {old} into {new}\n\n{' '.join(reason.split())}"
     result.update(_commit(vault_dir, touched, message))
     return result

@@ -181,3 +181,21 @@ def test_merge_never_drops_tags_or_links(setup):
     front = yaml.safe_load(text.split("---")[1])
     assert front["tags"] == ["retrieval", "keyword-search"]
     assert "- [[reciprocal-rank-fusion]]" in text
+
+
+def test_retargeted_labels_are_listed_once():
+    text = (
+        "# carried over\nqueries:\n- query: cheap tasks\n  relevant: [3-tier, routing]\n"
+        "- query: other\n  relevant: [routing]\n"
+    )
+    out = resolve._retarget_labels(text, "routing", "3-tier")
+    assert out.startswith("# carried over\n")
+    assert [q["relevant"] for q in yaml.safe_load(out)["queries"]] == [["3-tier"], ["3-tier"]]
+
+
+def test_a_long_merged_note_is_flagged(setup):
+    vault_dir, conn, _ = setup
+    long = merged()
+    long.body = "word " * 2000
+    result = resolve.merge_held(vault_dir, conn, "okapi-scoring", "bm25-ranking", long, "same")
+    assert "over the 512" in result["warning"]

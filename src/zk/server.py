@@ -48,8 +48,8 @@ A capture with nothing worth keeping is set aside with discard(kind="capture").
 Notes held as likely duplicates are resolved one at a time: list_held, then get_held_pair. If the
 held note states the same idea as the closest note (a reworded or narrower version of it), call
 merge_held with a merged note that keeps everything the existing note says and adds only what the
-held note says beyond it. If it is a different idea that is merely related, call apply_held. Give
-the reason either way.
+held note says beyond it, woven in and kept under about 400 words. If it is a different idea that
+is merely related, call apply_held. Give the reason either way.
 """
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
@@ -180,11 +180,16 @@ class MergedNote(BaseModel):
 
     title: str = Field(description="usually the existing note's title")
     type: str = Field(description="concept, pattern, problem or decision")
-    summary: str = Field(description="one to three plain sentences that state the idea")
+    summary: str = Field(
+        description="one to three plain sentences that state the idea, including the held "
+        "note's distinct point if it has one"
+    )
     body: str = Field(
         "",
         description="Markdown details, no top-level heading: the existing note's details plus "
-        "anything only the held note says; drop nothing the existing note says",
+        "anything only the held note says, woven in rather than appended; drop nothing the "
+        "existing note says, and keep the whole note under about 400 words, since search by "
+        "meaning reads only the first 512 tokens",
     )
     tags: list[str] = Field(default_factory=list)
     aliases: list[str] = Field(default_factory=list)
