@@ -110,3 +110,9 @@ def test_link_with_heading_and_label():
 def test_hash_changes_only_with_content():
     assert note(VALID).content_hash == note(VALID, path="elsewhere.md").content_hash
     assert note(VALID).content_hash != note(VALID + " ").content_hash
+
+
+def test_a_title_ending_in_a_hash_keeps_it():
+    note = parse_note("notes/x.md", b"---\nid: '1'\ntitle: Events in C#\n---\n# Events in C#\n")
+    assert note.h1 == "Events in C#"
+    assert parse_note("notes/y.md", b"# Closed heading ##\n").h1 == "Closed heading"

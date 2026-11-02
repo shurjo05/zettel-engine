@@ -1,0 +1,4 @@
+queries:
+  - query: why key vectors by a hash
+    relevant: [20260301100000-cache-embeddings-by-content-hash]
+    kind: paraphrase

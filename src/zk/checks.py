@@ -22,7 +22,7 @@ import numpy as np
 
 from zk.embed import Embedder, note_text
 from zk.evaluate import load_queries, run_eval
-from zk.proposals import DUPLICATE_AT
+from zk.proposals import DUPLICATE_AT, HELD_DIR
 
 QUESTIONS_DIR = "eval/questions"
 HOLDOUT_EVERY = 5  # one question in five is held out of any tuning
@@ -169,6 +169,14 @@ def check_new_notes(conn: sqlite3.Connection, paths: list[str]) -> list[str]:
         if not linked:
             warnings.append(f"{path} is linked to no other note.")
     return warnings
+
+
+def split_waiting(vault: Path, broken: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Split broken links into those naming a held note (they resolve once it is
+    released with apply_held) and those that are really broken."""
+    held = {p.stem.lower() for p in (vault / HELD_DIR).glob("*.md")}
+    waiting = [b for b in broken if b["target"].strip().lower() in held]
+    return waiting, [b for b in broken if b not in waiting]
 
 
 def long_notes(conn: sqlite3.Connection) -> list[tuple[str, int]]:
