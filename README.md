@@ -251,14 +251,16 @@ uv run zk import "C:\Obsidian\AI Second Brain\AI Brain" C:\path\to\vault --queri
 
 `zk suggest VAULT` reports what would make the vault better connected. It changes nothing:
 
-- **Links to consider**: pairs of notes at cosine similarity 0.80 or more that aren't linked
+- **Links to consider**: pairs of notes at cosine similarity 0.78 or more that aren't linked
   either way. Pairs at 0.85 or more are left to the duplicate check, and no note appears in more
   than three suggestions.
-- **Orphans**: notes nothing links to, each with the three unlinked notes most similar to it,
-  the likeliest places to link from.
+- **Orphans**: notes nothing links to, each with up to three unlinked notes at 0.70 or more,
+  the likeliest places to link from, or "no likely parent".
 - **Clusters with no map note**: groups of four or more notes that are each among the others'
-  five nearest neighbours (and at least 0.75 similar), where no member already links to half
-  of the rest. Each lists its shared tags as a hint for a title.
+  five nearest neighbours (and at least 0.75 similar), where no member already links to three
+  quarters of the rest. A cluster of more than 15 notes is split again at a stricter threshold,
+  because big ones mixed topics. Each lists its shared tags as a hint for a title, and the member
+  closest to being its map.
 
 The MCP tool `suggest_links(note)` gives the same suggestions for one note, and ingest now adds
 them to its "linked to no other note" warning.

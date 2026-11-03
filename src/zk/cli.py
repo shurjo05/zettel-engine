@@ -140,7 +140,10 @@ def cmd_suggest(args: argparse.Namespace) -> int:
         "orphans (nothing links to them) and notes that might",
         [
             f"{o['path']}  <-  "
-            + (", ".join(f"{c['path']} ({c['similarity']:.2f})" for c in o["candidates"]) or "-")
+            + (
+                ", ".join(f"{c['path']} ({c['similarity']:.2f})" for c in o["candidates"])
+                or "no likely parent"
+            )
             for o in report["orphans"]
         ],
     )
@@ -150,6 +153,12 @@ def cmd_suggest(args: argparse.Namespace) -> int:
             f"{len(c['notes'])} notes"
             + (f" [{', '.join(c['shared_tags'])}]" if c["shared_tags"] else "")
             + f", cohesion {c['cohesion']:.2f}: {', '.join(c['notes'])}"
+            + (
+                f" (closest to a map: {c['closest_to_map']['path']}, links to "
+                f"{c['closest_to_map']['links_to']})"
+                if c["closest_to_map"]["links_to"]
+                else ""
+            )
             for c in report["maps"]
         ],
     )

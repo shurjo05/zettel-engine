@@ -298,16 +298,25 @@ since M8), so `zk suggest` adds the other three. They are suggestions only, like
 would fill notes with weak "related" lines. If links should be added automatically later, the M8
 pattern fits: a model approves each one and code writes it.
 
-- **Links** reuse the duplicate check's scale. 0.80 is where bge-small's "related" verdict
-  starts, and pairs at 0.85 or more are left to the duplicate check. Capping each note at three
-  suggestions keeps one dense topic from filling the report.
+The thresholds were set by checking every suggestion by hand on the 93 imported legacy notes
+(bge-small):
+
+- **Links** at 0.80 gave 9 pairs: 7 genuinely useful, 2 roughly useful, none noise. At 0.78 there
+  were 18 pairs: 12 useful, 5 rough, 1 noise. At 0.76 the noise rose to 4. So the cut is 0.78. Pairs
+  at 0.85 or more are left to the duplicate check, and a cap of three suggestions per note keeps
+  one dense topic from filling the report.
 - **Orphans** come with the unlinked notes most similar to them, because the useful fix for an
-  orphan is a link to it from somewhere.
+  orphan is a link to it from somewhere. The top candidate was sensible for 15 of 20 orphans, and
+  the 5 bad ones all scored 0.74 or less, most of them under 0.70. Candidates below 0.70 are
+  dropped, and the report says "no likely parent" instead.
 - **Clusters** are the connected components of a mutual five-nearest-neighbour graph, with an edge
   only at 0.75 or more. Plain threshold clustering chains topics together through one broad note.
   Requiring each note to be among the other's nearest neighbours stops that, without a library or
-  a cluster count to choose. A cluster where some note already links to half of the others has a
-  map, so it isn't reported.
+  a cluster count to choose (k from 4 to 6 made no difference). At 0.75 one 36-note component
+  still merged about four topics, while 0.78 everywhere lost smaller topics such as ROS 2. So a
+  component of more than 15 notes is clustered again 0.03 stricter, which gave five single-topic
+  clusters of 17, 10, 7, 6 and 5 notes. A cluster counts as mapped only when one note links to 75%
+  of the others, because at 50% ordinary notes qualified.
 
 Everything runs on the local embeddings and the existing link table, and no note leaves the
 machine.

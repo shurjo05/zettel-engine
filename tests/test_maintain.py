@@ -47,11 +47,14 @@ def test_link_suggestions_skip_linked_pairs_and_duplicates(indexed):
 def test_orphans_come_with_unlinked_candidates(indexed):
     vault, make, embedder = indexed
     conn = make()
-    report = {o["path"]: o["candidates"] for o in maintain.orphan_report(conn, embedder)}
+    report = {o["path"]: o["candidates"] for o in maintain.orphan_report(conn, embedder, at=0.0)}
     assert "notes/orphan-note.md" in report
     assert "notes/reciprocal-rank-fusion.md" not in report  # bm25-ranking links to it
     candidates = report["notes/orphan-note.md"]
     assert len(candidates) == 3 and "notes/orphan-note.md" not in [c["path"] for c in candidates]
+    # Below the floor nothing is a likely parent (the test embedder's scores run low).
+    floored = {o["path"]: o["candidates"] for o in maintain.orphan_report(conn, embedder)}
+    assert floored["notes/orphan-note.md"] == []
 
 
 def test_clusters_split_topics_and_spot_an_existing_map(indexed):
@@ -85,7 +88,23 @@ def test_suggest_command(vault, tmp_path, capsys):
     assert main(["suggest", str(vault), "--db", db]) == 0
     out = capsys.readouterr().out
     assert "orphans (nothing links to them) and notes that might" in out
-    assert "notes/orphan-note.md  <-  " in out
+    assert "notes/orphan-note.md  <-  no likely parent" in out
     main(["suggest", str(vault), "--db", db, "--json"])
     data = json.loads(capsys.readouterr().out)
     assert set(data) == {"links", "orphans", "maps"}
+
+
+def test_a_big_mixed_cluster_is_split(indexed):
+    vault, make, embedder = indexed
+    for f in (vault / "notes").glob("*.md"):
+        f.unlink()
+    shared = ["agent", "hooks", "notes", "graph"]
+    for i in range(6):
+        write(vault, f"hook-{i}", shared + ["session", "capture", "transcript", f"h{i}"])
+        write(vault, f"graph-{i}", shared + ["leiden", "community", "edges", f"g{i}"])
+    conn = make()
+    whole = maintain.clusters(conn, embedder, k=11, at=0.3, min_size=4, split_over=100)
+    assert len(whole) == 1 and len(whole[0]["notes"]) == 12
+    split = maintain.clusters(conn, embedder, k=11, at=0.3, min_size=4, split_over=8)
+    assert sorted(len(c["notes"]) for c in split) == [6, 6]
+    assert all(len({p.split("-")[0] for p in c["notes"]}) == 1 for c in split)
