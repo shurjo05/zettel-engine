@@ -1,4 +1,4 @@
-"""Command-line interface: index, check, search, show, eval, capture and serve.
+"""Command-line interface: index, check, search, eval, capture, process, hooks and serve.
 
 The CLI holds no logic of its own; it parses arguments, calls the library and
 prints the result. The MCP server (`zk serve`, zk/server.py) is a second door
@@ -16,7 +16,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from zk import capture, checks, evaluate, lookup, maintain, migrate, vault
+from zk import capture, checks, evaluate, hooks, lookup, maintain, migrate, process, sessions, vault
 from zk.embed import DEFAULT_MODEL, FastEmbedder, update_embeddings
 from zk.index import (
     DEFAULT_EXCLUDES,
@@ -215,6 +215,15 @@ def cmd_capture(args: argparse.Namespace) -> int:
     """Save a session or a piece of text into the vault inbox. Never fails a hook."""
     if not args.vault.is_dir():
         sys.exit(f"zk: {args.vault} is not a folder")
+    if args.catch_up:
+        found = sessions.catch_up(args.vault, args.days, dry_run=args.dry_run)
+        for f in found:
+            if f["saved"] or args.verbose:
+                print(f"{f['saved'] or 'skipped'}  {f['session']}  ({f['why']})")
+        saved = sum(1 for f in found if f["saved"])
+        verb = "would capture" if args.dry_run else "captured"
+        print(f"zk capture: {verb} {saved} of {len(found)} recent sessions", file=sys.stderr)
+        return 0
     if args.hook and os.environ.get(INGESTING):
         print("zk capture: skipped (this is zk's own ingest session)", file=sys.stderr)
         return 0
@@ -225,25 +234,18 @@ def cmd_capture(args: argparse.Namespace) -> int:
             source = re.sub(r"[^a-z0-9]+", "-", (args.source or "manual").lower()).strip("-")
             text = capture.render_text_capture(args.text, source or "manual", captured)
             name = f"inbox/{now:%Y-%m-%d-%H%M}-{source or 'manual'}.md"
+            path = vault.write_new(args.vault, vault.unique_path(args.vault, name), text)
         else:
             if args.hook:
-                event = json.load(sys.stdin)
-                transcript = Path(event["transcript_path"])
-                session = re.sub(
-                    r"[^A-Za-z0-9-]", "", str(event.get("session_id") or transcript.stem)
-                )
-                project = Path(event["cwd"]).name if event.get("cwd") else None
+                saved, why = sessions.from_hook(args.vault, json.load(sys.stdin), now)
             else:
-                transcript, session, project = args.transcript, args.transcript.stem, None
-            with transcript.open(encoding="utf-8") as f:
-                turns = capture.parse_transcript(f)
-            keep, why = capture.worth_keeping(turns)
-            if not keep:
+                saved, why = sessions.capture_session(
+                    args.vault, sessions.describe(args.transcript), now
+                )
+            if not saved:
                 print(f"zk capture: skipped ({why})", file=sys.stderr)
                 return 0
-            text = capture.render_capture(turns, f"claude-code:{session}", captured, project)
-            name = f"inbox/{now:%Y-%m-%d-%H%M}-claude-{session[:8]}.md"
-        path = vault.write_new(args.vault, vault.unique_path(args.vault, name), text)
+            path = saved
     except Exception as exc:  # a broken capture must never break the session that triggered it
         print(f"zk capture: failed: {exc}", file=sys.stderr)
         return 0 if args.hook else 1
@@ -254,7 +256,7 @@ def cmd_capture(args: argparse.Namespace) -> int:
     return 0
 
 
-INGESTING = "ZK_INGESTING"  # set for the agent `--then` starts, so its own session isn't captured
+INGESTING = sessions.INGESTING  # set for the agent `--then` starts, so its session isn't captured
 
 
 def _start_ingest(command: str, vault_dir: Path, now: datetime) -> Path:
@@ -279,6 +281,114 @@ def _start_ingest(command: str, vault_dir: Path, now: datetime) -> Path:
             **detach,
         )
     return log
+
+
+def cmd_process(args: argparse.Namespace) -> int:
+    """Ingest the inbox and resolve held notes with headless agents, when there is work."""
+    if not args.vault.is_dir():
+        sys.exit(f"zk: {args.vault} is not a folder")
+    commands = process.default_commands(args.resolve_model)
+    if args.ingest_command:
+        commands["ingest"] = args.ingest_command
+    if args.resolve_command:
+        commands["resolve"] = args.resolve_command
+    try:
+        summary = process.run(args.vault, args.catch_up, args.days, commands)
+    except process.Busy as exc:
+        print(f"zk process: skipped, {exc}; it will pick up new captures", file=sys.stderr)
+        return 0
+    print(
+        f"zk process: {summary['caught_up']} caught up, {summary['ingest_runs']} ingest and "
+        f"{summary['resolve_runs']} resolve run(s); log {summary['log']}",
+        file=sys.stderr,
+    )
+    return 0
+
+
+def cmd_hooks(args: argparse.Namespace) -> int:
+    """Install or show zk's session-end hooks for Claude Code and Codex."""
+    agents = ["claude", "codex"] if args.codex else ["claude"]
+    if args.action == "status":
+        return _hooks_status(args.vault)
+    if not args.vault.is_dir():
+        sys.exit(f"zk: {args.vault} is not a folder")
+    for agent in agents:
+        try:
+            result = hooks.install(agent, args.vault, not args.no_process, args.dry_run)
+        except ValueError as exc:
+            print(f"zk hooks: {exc}", file=sys.stderr)
+            return 1
+        print(f"{agent}: {result['action']} in {result['path']}")
+        if args.dry_run and result.get("diff"):
+            print(result["diff"])
+        if result.get("backup"):
+            print(f"  backup: {result['backup']}")
+        for command in result["commands"]:
+            print(f"  {command}")
+        if agent == "codex" and result["action"] == "added":
+            print("  Codex runs a new hook only after you trust it: /hooks in the CLI, or")
+            print("  Settings > Hooks in the app.")
+    return 0
+
+
+def _hooks_status(vault_dir: Path | None) -> int:
+    for agent in ("claude", "codex"):
+        try:
+            found = hooks.installed(agent)
+        except ValueError as exc:
+            found, note = [], str(exc)
+        else:
+            note = "installed" if found else "not installed"
+        print(f"{agent} hook: {note} ({hooks.settings_path(agent)})")
+        for command in found:
+            print(f"  {command}")
+    task = hooks.schedule_status()
+    print(f"scheduled catch-up: {'installed' if task else 'not installed'}")
+    record = sessions.load_record()
+    captures = sorted(
+        (v.get("checked", ""), v["capture"]) for v in record.values() if v.get("capture")
+    )
+    print(f"sessions seen: {len(record)}, captured: {len(captures)}")
+    if captures:
+        print(f"  last capture: {captures[-1][1]} at {captures[-1][0]}")
+    logs = sorted((data_dir() / "logs").glob("process-*.log"))
+    if logs:
+        print(f"last process run: {logs[-1]}")
+        tail = logs[-1].read_text(encoding="utf-8", errors="replace").splitlines()[-1:]
+        for line in tail:
+            print(f"  {line}")
+    if process.lock_path().exists():
+        print(f"running now (lock {process.lock_path()})")
+    if vault_dir and vault_dir.is_dir():
+        from zk.ingest import list_held, list_inbox
+
+        print(f"inbox: {len(list_inbox(vault_dir))} capture(s), {len(list_held(vault_dir))} held")
+    return 0
+
+
+def cmd_schedule(args: argparse.Namespace) -> int:
+    """Install, show or remove the daily catch-up task (Windows Task Scheduler)."""
+    if args.action == "status":
+        task = hooks.schedule_status()
+        print(task or "zk schedule: not installed")
+        return 0
+    if args.action == "remove":
+        removed = hooks.remove_schedule()
+        print(f"zk schedule: {'removed' if removed else 'nothing to remove'}", file=sys.stderr)
+        return 0
+    if args.vault is None or not args.vault.is_dir():
+        sys.exit("zk schedule install: give the vault folder")
+    if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", args.at):
+        sys.exit("zk schedule install: --at takes a time like 21:00")
+    result = hooks.install_schedule(args.vault, args.at, data_dir(), args.dry_run)
+    if result["action"] == "added":
+        print(f"zk schedule: added the task {result['task']!r}, daily at {result['at']}")
+    elif result["action"] == "would add":
+        print(result["xml"])
+    else:
+        print("zk schedule: Task Scheduler is Windows only. A cron line that does the same:")
+        print(result["cron"])
+    return 0
 
 
 def cmd_import(args: argparse.Namespace) -> int:
@@ -475,10 +585,26 @@ def main(argv: list[str] | None = None) -> int:
     p_capture = sub.add_parser("capture", help="save a session or text into the vault inbox")
     p_capture.add_argument("vault", type=Path, help="path to the vault folder")
     src = p_capture.add_mutually_exclusive_group(required=True)
-    src.add_argument("--hook", action="store_true", help="read a Claude Code hook event on stdin")
-    src.add_argument("--transcript", type=Path, help="a Claude Code transcript (.jsonl)")
+    src.add_argument(
+        "--hook", action="store_true", help="read a Claude Code or Codex hook event on stdin"
+    )
+    src.add_argument("--transcript", type=Path, help="a Claude Code or Codex transcript (.jsonl)")
     src.add_argument("--text", help="free text to capture, e.g. from Codex or by hand")
+    src.add_argument(
+        "--catch-up",
+        action="store_true",
+        help="capture recent Claude Code and Codex sessions that no hook captured",
+    )
     p_capture.add_argument("--source", help="label for --text captures (default manual)")
+    p_capture.add_argument(
+        "--days", type=float, default=3, help="--catch-up: how far back to look (default 3)"
+    )
+    p_capture.add_argument(
+        "--dry-run", action="store_true", help="--catch-up: list what would be captured"
+    )
+    p_capture.add_argument(
+        "--verbose", action="store_true", help="--catch-up: also list skipped sessions"
+    )
     p_capture.add_argument(
         "--then",
         metavar="COMMAND",
@@ -486,6 +612,42 @@ def main(argv: list[str] | None = None) -> int:
         "that ingests the inbox); it runs with ZK_INGESTING=1 so its own session is not captured",
     )
     p_capture.set_defaults(func=cmd_capture)
+
+    p_process = sub.add_parser(
+        "process", help="ingest the inbox, then resolve held notes, with headless agents"
+    )
+    p_process.add_argument("vault", type=Path, help="path to the vault folder")
+    p_process.add_argument(
+        "--catch-up", action="store_true", help="first capture sessions no hook captured"
+    )
+    p_process.add_argument("--days", type=float, default=3, help="--catch-up window (default 3)")
+    p_process.add_argument(
+        "--resolve-model", default="opus", help="model for resolving held notes (default opus)"
+    )
+    p_process.add_argument("--ingest-command", help="run this instead of the default ingest agent")
+    p_process.add_argument(
+        "--resolve-command", help="run this instead of the default resolve agent"
+    )
+    p_process.set_defaults(func=cmd_process)
+
+    p_hooks = sub.add_parser("hooks", help="install or show the session-end hooks")
+    p_hooks.add_argument("action", choices=["install", "status"])
+    p_hooks.add_argument("vault", type=Path, nargs="?", help="path to the vault folder")
+    p_hooks.add_argument("--codex", action="store_true", help="install for Codex too")
+    p_hooks.add_argument(
+        "--no-process",
+        action="store_true",
+        help="only capture; don't start `zk process` after each session",
+    )
+    p_hooks.add_argument("--dry-run", action="store_true", help="show the change, make none")
+    p_hooks.set_defaults(func=cmd_hooks)
+
+    p_schedule = sub.add_parser("schedule", help="the daily catch-up task (Windows)")
+    p_schedule.add_argument("action", choices=["install", "status", "remove"])
+    p_schedule.add_argument("vault", type=Path, nargs="?", help="path to the vault folder")
+    p_schedule.add_argument("--at", default="21:00", help="time of day, HH:MM (default 21:00)")
+    p_schedule.add_argument("--dry-run", action="store_true", help="print the task, add nothing")
+    p_schedule.set_defaults(func=cmd_schedule)
 
     p_import = sub.add_parser("import", help="import a legacy vault's notes (reads it only)")
     p_import.add_argument(

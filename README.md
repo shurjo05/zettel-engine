@@ -19,8 +19,8 @@ rebuildable index stored outside the vault.
 | M6 | Ingest: session capture, automatic notes with duplicate check, checks that warn | done |
 | M7 | Import the legacy notes: convert, dedup, repair links | done |
 | M8 | Held duplicates judged by a model, then merged or released | done |
-| M9 | Maintenance reports: link suggestions, orphans, map suggestions | in progress |
-| M10 | Hooks that run on their own: install the session hook, catch up on sessions it missed (desktop apps, Codex), schedule ingest and the duplicate resolver, tested on Windows | planned |
+| M9 | Maintenance reports: link suggestions, orphans, map suggestions | done |
+| M10 | Hooks that run on their own: install the session hook, catch up on sessions it missed (desktop apps, Codex), schedule ingest and the duplicate resolver, tested on Windows | in progress |
 | M11 | Context-efficiency and RAG evaluation | planned |
 
 ## Setup
@@ -50,6 +50,7 @@ uv run zk eval path/to/vault                                   # the questions s
 uv run zk eval path/to/vault queries.yaml --mode keyword --mode semantic   # compare modes
 uv run zk index path/to/vault --embed                          # precompute embeddings
 uv run zk serve path/to/vault                                  # MCP server over stdio
+uv run zk hooks status path/to/vault                           # what runs on its own
 ```
 
 Every command refreshes the index first (only changed files are re-parsed), so results are never
@@ -121,28 +122,8 @@ output, thinking and subagents. Sessions with fewer than two of your messages ar
 keep their first and last 20,000 characters, and common secret formats (API keys, tokens, private
 keys, `password=...`) are replaced with `[REDACTED]`.
 
-To capture every Claude Code session automatically, add a SessionEnd hook to
-`%USERPROFILE%\.claude\settings.json` (`~/.claude/settings.json` elsewhere):
-
-```json
-{
-  "hooks": {
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "uv --directory C:\\path\\to\\zettel-engine run zk capture C:\\path\\to\\vault --hook"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-With `--hook`, `zk capture` reads the hook's event from stdin, and if anything goes wrong it reports
-on stderr and exits 0, so a capture problem never interrupts Claude Code.
+To capture sessions without being asked, install the session-end hook (see
+[Running on its own](#running-on-its-own)).
 
 ### Turning conversations into notes
 
@@ -178,19 +159,6 @@ Codex, so that `/zk-ingest` and `/zk-inbox` work in the apps too:
 - [docs/commands/zk-inbox.md](docs/commands/zk-inbox.md): turns the captures waiting in the inbox
   into notes.
 
-To process each captured session without being asked, let the hook start a headless agent after
-the capture is saved. This is opt-in, because every captured session then costs a short model
-run:
-
-```json
-"command": "uv --directory C:\\path\\to\\zettel-engine run zk capture C:\\path\\to\\vault --hook --then \"claude -p \\\"Process the zk inbox with the zk tools, following the zk server's instructions.\\\" --allowedTools mcp__zk\""
-```
-
-`--then` runs its command detached, logging to the zk data folder's `logs/`. It sets
-`ZK_INGESTING=1`, so the headless session's own end isn't captured again. `--allowedTools
-mcp__zk` limits that agent to the zk tools, which create and move files and change a note only
-by merging a held duplicate into it.
-
 ### Resolving held duplicates
 
 A held note is either the same idea as an existing note or only related to it, and similarity
@@ -211,15 +179,52 @@ pair and decides, and zk does the writing:
   through, with a warning.
 
 [docs/commands/zk-resolve.md](docs/commands/zk-resolve.md) is the `/zk-resolve` command. Run it
-with your strongest model, by hand or on a schedule. For example, daily with Windows Task
-Scheduler:
+with your strongest model by hand, or let `zk process` run it after every session (below). Each
+run sends the held notes and their closest notes to the model's provider (see
+[docs/data-flow.md](docs/data-flow.md)).
+
+### Running on its own
+
+Three commands make the whole loop run without you: capture each session when it ends, turn
+captures into notes, and resolve any notes held as duplicates. Run the first with `--dry-run` to
+see the change before making it.
 
 ```bat
-schtasks /Create /TN "zk resolve" /SC DAILY /ST 21:00 /TR "claude -p \"Resolve the notes held in the zk inbox with the zk tools, following the zk server's instructions.\" --model opus --allowedTools mcp__zk"
+cd C:\path\to\zettel-engine
+uv run zk hooks install C:\path\to\vault --codex --dry-run
+uv run zk hooks install C:\path\to\vault --codex
+uv run zk schedule install C:\path\to\vault --at 21:00
+uv run zk hooks status C:\path\to\vault
 ```
 
-Each run sends the held notes and their closest notes to the model's provider (see
-[docs/data-flow.md](docs/data-flow.md)).
+- **`zk hooks install`** adds a SessionEnd hook to Claude Code's `%USERPROFILE%\.claude\settings.json`
+  (used by the CLI, the IDE extensions and the desktop app) and, with `--codex`, to
+  `%USERPROFILE%\.codex\hooks.json`. It only adds an entry, never changes one, does nothing when
+  zk's hook is already there, and backs the file up first. Codex runs a new hook only once you
+  trust it, with `/hooks` in the CLI or Settings > Hooks in the app. The hook runs
+  `python -m zk.hook`, which imports only what capturing needs, because agents give session-end
+  hooks one to three seconds.
+- **After each captured session** the hook starts `zk process` in the background. It runs a
+  headless `claude -p` with only the zk tools to ingest the inbox, then, if any note was held, a
+  second one (with `--resolve-model`, default opus) to resolve the holds. A step with no work makes
+  no model call. One run happens at a time; captures that arrive meanwhile get another round.
+  Their prompts start with `[zk]` and run with `ZK_INGESTING=1`, so zk's own sessions are never
+  captured. `--no-process` installs a hook that only captures.
+- **`zk capture --catch-up`** captures recent sessions no hook did: an app where hooks don't run,
+  a crash, a session that ended while zk wasn't installed. It reads Claude Code transcripts in
+  `~/.claude/projects` and Codex rollouts in `~/.codex/sessions`, skips sessions used in the last
+  30 minutes, and keeps a record in the zk data folder (`sessions.json`) so nothing is captured
+  twice. A resumed session yields a capture of its new turns only. `--dry-run` lists what it would
+  capture.
+- **`zk schedule install`** adds a daily Windows task, `zk catch-up`, that runs
+  `zk process --catch-up`. If the PC was off at that time, it runs at the next chance.
+  `zk schedule status` and `zk schedule remove` go with it. Elsewhere it prints a cron line.
+
+Logs go to the zk data folder's `logs/`. The headless agents need the zk server registered for
+your user with `--allow-writes` (see above). Sessions in the cloud (claude.ai/code) can't be
+captured, since their transcripts aren't on your machine.
+
+The older `zk capture --hook [--then COMMAND]` still works.
 
 ### Importing a legacy vault
 
