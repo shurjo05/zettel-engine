@@ -202,6 +202,9 @@ pair and decides, and zk does the writing:
   pointed at it, and the held file moves to `inbox/merged/`. It is all one git commit, with the
   reason in the message, so `git revert` undoes a bad merge. If any file changed while merging,
   nothing is written.
+- A merged note should stay under about 400 words, with the held note's point in its summary,
+  because search by meaning reads only a note's first 512 tokens. A longer merge still goes
+  through, with a warning.
 
 [docs/commands/zk-resolve.md](docs/commands/zk-resolve.md) is the `/zk-resolve` command. Run it
 with your strongest model, by hand or on a schedule. For example, daily with Windows Task
