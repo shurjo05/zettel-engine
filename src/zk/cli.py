@@ -16,7 +16,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from zk import capture, checks, evaluate, lookup, migrate, vault
+from zk import capture, checks, evaluate, lookup, maintain, migrate, vault
 from zk.embed import DEFAULT_MODEL, FastEmbedder, update_embeddings
 from zk.index import (
     DEFAULT_EXCLUDES,
@@ -108,6 +108,52 @@ def cmd_check(args: argparse.Namespace) -> int:
     else:
         print(format_report(report, limit=args.limit, long=long, pairs=pairs))
     return 1 if report.errors else 0
+
+
+def cmd_suggest(args: argparse.Namespace) -> int:
+    conn = _open(args)
+    embedder = _embedder(args, conn)
+    report = {
+        "links": maintain.link_suggestions(conn, embedder),
+        "orphans": maintain.orphan_report(conn, embedder),
+        "maps": [c for c in maintain.clusters(conn, embedder) if c["map"] is None],
+    }
+    conn.close()
+    if args.json:
+        print(json.dumps(report, indent=2))
+        return 0
+    limit = args.limit
+
+    def section(title: str, rows: list[str]) -> None:
+        shown = rows if limit <= 0 else rows[:limit]
+        print(f"\n{title} ({len(rows)})")
+        for r in shown:
+            print(f"  {r}")
+        if len(shown) < len(rows):
+            print(f"  ... {len(rows) - len(shown)} more (use --limit 0 for all)")
+
+    section(
+        "links to consider (similar, not linked)",
+        [f"{x['similarity']:.2f}  {x['a']}  <->  {x['b']}" for x in report["links"]],
+    )
+    section(
+        "orphans (nothing links to them) and notes that might",
+        [
+            f"{o['path']}  <-  "
+            + (", ".join(f"{c['path']} ({c['similarity']:.2f})" for c in o["candidates"]) or "-")
+            for o in report["orphans"]
+        ],
+    )
+    section(
+        "clusters with no map note",
+        [
+            f"{len(c['notes'])} notes"
+            + (f" [{', '.join(c['shared_tags'])}]" if c["shared_tags"] else "")
+            + f", cohesion {c['cohesion']:.2f}: {', '.join(c['notes'])}"
+            for c in report["maps"]
+        ],
+    )
+    return 0
 
 
 def cmd_search(args: argparse.Namespace) -> int:
@@ -373,6 +419,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     _model_option(p_check)
     p_check.set_defaults(func=cmd_check)
+
+    p_suggest = sub.add_parser(
+        "suggest", help="suggest links, parents for orphans, and map notes (changes nothing)"
+    )
+    _common(p_suggest)
+    p_suggest.add_argument("--json", action="store_true", help="machine-readable output")
+    p_suggest.add_argument("--limit", type=int, default=20, help="rows per list, 0 for all")
+    _model_option(p_suggest)
+    p_suggest.set_defaults(func=cmd_suggest)
 
     p_search = sub.add_parser("search", help="keyword (BM25) or semantic search over the vault")
     _common(p_search)

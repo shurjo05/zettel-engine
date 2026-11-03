@@ -289,3 +289,25 @@ transaction, where SQLite ignores it. A note changed later in that session kept 
 issues next to the new ones until the index was reopened. This mattered most for the long-lived
 MCP server.
 
+## 20. Maintenance is reported, not applied (2026-11-03)
+
+The plan's maintenance milestone asked for a duplicate report, link suggestions, an orphan report
+and map suggestions. The duplicate report already existed (`zk check --duplicates`, and held notes
+since M8), so `zk suggest` adds the other three. They are suggestions only, like the ingest checks
+(decision 17): a missing link is a judgement about meaning, and adding links by threshold alone
+would fill notes with weak "related" lines. If links should be added automatically later, the M8
+pattern fits: a model approves each one and code writes it.
+
+- **Links** reuse the duplicate check's scale. 0.80 is where bge-small's "related" verdict
+  starts, and pairs at 0.85 or more are left to the duplicate check. Capping each note at three
+  suggestions keeps one dense topic from filling the report.
+- **Orphans** come with the unlinked notes most similar to them, because the useful fix for an
+  orphan is a link to it from somewhere.
+- **Clusters** are the connected components of a mutual five-nearest-neighbour graph, with an edge
+  only at 0.75 or more. Plain threshold clustering chains topics together through one broad note.
+  Requiring each note to be among the other's nearest neighbours stops that, without a library or
+  a cluster count to choose. A cluster where some note already links to half of the others has a
+  map, so it isn't reported.
+
+Everything runs on the local embeddings and the existing link table, and no note leaves the
+machine.

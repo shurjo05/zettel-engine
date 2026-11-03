@@ -20,6 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
+from zk import maintain
 from zk.embed import Embedder, note_text
 from zk.evaluate import load_queries, run_eval
 from zk.proposals import DUPLICATE_AT, HELD_DIR
@@ -141,8 +142,10 @@ def check_scores(
     return warnings
 
 
-def check_new_notes(conn: sqlite3.Connection, paths: list[str]) -> list[str]:
-    """Health problems in notes that were just added."""
+def check_new_notes(
+    conn: sqlite3.Connection, paths: list[str], embedder: Embedder | None = None
+) -> list[str]:
+    """Health problems in notes that were just added, with link suggestions for unlinked ones."""
     warnings = []
     for path in paths:
         row = conn.execute("SELECT title, body FROM notes WHERE path = ?", (path,)).fetchone()
@@ -167,7 +170,13 @@ def check_new_notes(conn: sqlite3.Connection, paths: list[str]) -> list[str]:
             (path, path),
         ).fetchone()
         if not linked:
-            warnings.append(f"{path} is linked to no other note.")
+            similar = maintain.suggest_for(conn, embedder, path, 3) if embedder else []
+            hint = (
+                " Similar notes: " + ", ".join(f"[[{Path(s['path']).stem}]]" for s in similar) + "."
+                if similar
+                else ""
+            )
+            warnings.append(f"{path} is linked to no other note.{hint}")
     return warnings
 
 

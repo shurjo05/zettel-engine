@@ -68,7 +68,7 @@ def test_scores_are_compared_with_when_each_question_was_added(vault, tmp_path, 
     assert checks.check_scores(conn, vault, history, embedder, NOW) == []
 
 
-def test_new_note_health(vault, tmp_path):
+def test_new_note_health(vault, tmp_path, embedder):
     notes = vault / "notes"
     (notes / "long-one.md").write_text(
         "---\nid: '1'\ntitle: Long One\ntype: concept\n---\n# Long One\n\n"
@@ -85,6 +85,9 @@ def test_new_note_health(vault, tmp_path):
     assert any(w.startswith("notes/long-one.md is about") for w in warnings)
     assert "notes/long-one.md links to [[missing-note]], which doesn't exist." in warnings
     assert "notes/alone.md is linked to no other note." in warnings
+    update_embeddings(conn, embedder)
+    hinted = checks.check_new_notes(conn, ["notes/alone.md"], embedder)
+    assert hinted[0].startswith("notes/alone.md is linked to no other note. Similar notes: [[")
     assert not any("long-one.md is linked to no" in w for w in warnings)
     assert checks.long_notes(conn)[0][0] == "notes/long-one.md"
 

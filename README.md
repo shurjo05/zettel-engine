@@ -17,8 +17,10 @@ rebuildable index stored outside the vault.
 | M4 | Semantic search with local embeddings | done |
 | M5 | Hybrid search (reciprocal rank fusion), the default mode | done |
 | M6 | Ingest: session capture, automatic notes with duplicate check, checks that warn | done |
-| M7 | Import the legacy notes: convert, dedup, repair links | in progress |
-| M8-M9 | Maintenance, evaluation | planned |
+| M7 | Import the legacy notes: convert, dedup, repair links | done |
+| M8 | Held duplicates judged by a model, then merged or released | done |
+| M9 | Maintenance reports: link suggestions, orphans, map suggestions | in progress |
+| M10 | Context-efficiency and RAG evaluation | planned |
 
 ## Setup
 
@@ -35,6 +37,7 @@ uv run pytest
 uv run zk check path/to/vault          # index the vault, then print a health report
 uv run zk check path/to/vault --json   # the same report as JSON
 uv run zk check path/to/vault --duplicates   # also list near-duplicate notes (embeds them)
+uv run zk suggest path/to/vault        # links to consider, orphans' likely parents, map ideas
 uv run zk index path/to/vault          # just build or refresh the index
 uv run zk search path/to/vault "how do I merge ranked lists"   # hybrid search (the default)
 uv run zk search path/to/vault "hooks" --type pattern --tag claude-code -k 10
@@ -242,6 +245,22 @@ uv run zk import "C:\Obsidian\AI Second Brain\AI Brain" C:\path\to\vault --queri
 - `--queries` carries a legacy test set over to `eval/legacy-queries.yaml`, with its answers renamed.
 - `--dry-run` runs the same import into a throwaway copy and prints the report. A real import
   writes the report to `inbox/reports/` and is one git commit.
+
+### Maintenance suggestions
+
+`zk suggest VAULT` reports what would make the vault better connected. It changes nothing:
+
+- **Links to consider**: pairs of notes at cosine similarity 0.80 or more that aren't linked
+  either way. Pairs at 0.85 or more are left to the duplicate check, and no note appears in more
+  than three suggestions.
+- **Orphans**: notes nothing links to, each with the three unlinked notes most similar to it,
+  the likeliest places to link from.
+- **Clusters with no map note**: groups of four or more notes that are each among the others'
+  five nearest neighbours (and at least 0.75 similar), where no member already links to half
+  of the rest. Each lists its shared tags as a hint for a title.
+
+The MCP tool `suggest_links(note)` gives the same suggestions for one note, and ingest now adds
+them to its "linked to no other note" warning.
 
 ### Evaluation
 
