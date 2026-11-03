@@ -314,7 +314,7 @@ The thresholds were set by checking every suggestion by hand on the 93 imported 
   Requiring each note to be among the other's nearest neighbours stops that, without a library or
   a cluster count to choose (k from 4 to 6 made no difference). At 0.75 one 36-note component
   still merged about four topics, while 0.78 everywhere lost smaller topics such as ROS 2. So a
-  component of more than 15 notes is clustered again 0.03 stricter, which gave five single-topic
+  component of more than 20 notes is clustered again 0.03 stricter, which gave five single-topic
   clusters of 17, 10, 7, 6 and 5 notes. A cluster counts as mapped only when one note links to 75%
   of the others, because at 50% ordinary notes qualified.
 

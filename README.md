@@ -258,7 +258,7 @@ uv run zk import "C:\Obsidian\AI Second Brain\AI Brain" C:\path\to\vault --queri
   the likeliest places to link from, or "no likely parent".
 - **Clusters with no map note**: groups of four or more notes that are each among the others'
   five nearest neighbours (and at least 0.75 similar), where no member already links to three
-  quarters of the rest. A cluster of more than 15 notes is split again at a stricter threshold,
+  quarters of the rest. A cluster of more than 20 notes is split again at a stricter threshold,
   because big ones mixed topics. Each lists its shared tags as a hint for a title, and the member
   closest to being its map.
 

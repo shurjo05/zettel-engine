@@ -23,7 +23,7 @@ NEIGHBOURS = (
     5  # a cluster joins notes that are each in the other's 5 nearest (4-6 made no difference)
 )
 CLUSTER_AT = 0.75  # ...and at least this similar
-SPLIT_OVER = 15  # a bigger cluster mixed topics: it is clustered again, a step stricter
+SPLIT_OVER = 20  # a 36-note cluster mixed topics; 17 at the next step did not: re-cluster stricter
 SPLIT_STEP = 0.03
 MIN_CLUSTER = 4  # a map is worth suggesting for four or more notes
 MAP_COVERS = 0.75  # a note that links to 75% of its cluster already serves as its map
