@@ -20,7 +20,8 @@ rebuildable index stored outside the vault.
 | M7 | Import the legacy notes: convert, dedup, repair links | done |
 | M8 | Held duplicates judged by a model, then merged or released | done |
 | M9 | Maintenance reports: link suggestions, orphans, map suggestions | in progress |
-| M10 | Context-efficiency and RAG evaluation | planned |
+| M10 | Hooks that run on their own: install the session hook, catch up on sessions it missed (desktop apps, Codex), schedule ingest and the duplicate resolver, tested on Windows | planned |
+| M11 | Context-efficiency and RAG evaluation | planned |
 
 ## Setup
 
