@@ -320,3 +320,35 @@ The thresholds were set by checking every suggestion by hand on the 93 imported 
 
 Everything runs on the local embeddings and the existing link table, and no note leaves the
 machine.
+
+## 21. Hooks capture, a background run processes, a daily task catches up (2026-11-03)
+
+Since M6 the parts existed (a capture hook, `--then`), but nothing installed them, Codex wasn't
+covered and nothing ran on Windows. Shurjo asked for hooks as their own milestone, and for the
+resolver to run after every session rather than daily.
+
+- **Capture is the only thing a hook does.** Claude Code gives SessionEnd hooks about 1.5 seconds
+  and Codex at most 3, and importing the CLI took 2.6 seconds (numpy). So the hook is its own
+  module, `python -m zk.hook`, which imports in about 0.1 seconds and calls the venv's python
+  directly instead of `uv run`, which would sync the environment first. Anything slow happens in a
+  detached `zk process`.
+- **`zk process` chains ingest and resolve, and each step runs only when it has work.** A
+  session with nothing worth capturing starts nothing, and an ingest that holds no note makes no
+  resolve call, so running after every session costs little. A lock file makes runs take turns.
+  A run checks the inbox again before it exits, so a capture that arrived meanwhile isn't left
+  waiting, but a capture the agent left alone isn't retried in a loop.
+- **The record of captured sessions is keyed by session id and counts turns.** The hook and the
+  catch-up share it, so a session is never captured twice, and a resumed session yields only its
+  new turns. Transcripts used in the last 30 minutes are skipped, since they may still be open.
+- **zk's own sessions are marked twice.** The environment variable `ZK_INGESTING=1` stops the hook,
+  and the `[zk]` prompt prefix stops the catch-up, which reads transcripts long after the
+  environment is gone.
+- **Installing only adds.** Settings files belong to the person, so `zk hooks install` appends one
+  entry after a backup, refuses a file it can't parse, and is a no-op once zk's hook is there.
+  Changing or removing an entry is left to the person.
+- **The daily task is a safety net,** for apps where hooks don't fire and sessions that ended while
+  the PC was asleep. It is created from XML so it can run at the next chance when the PC was off
+  (`StartWhenAvailable`), which `schtasks /SC DAILY` alone can't set.
+- **The Codex rollout format isn't a stable interface,** by OpenAI's own docs. The parser reads
+  `response_item` messages, falls back to `event_msg` echoes, and skips anything it doesn't know,
+  so a format change makes captures shorter, not wrong. The Windows test checks it on real files.

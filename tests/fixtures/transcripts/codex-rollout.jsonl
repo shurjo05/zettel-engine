@@ -1,0 +1,13 @@
+{"timestamp": "2026-11-03T10:00:00Z", "type": "session_meta", "payload": {"id": "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b", "cwd": "/w/codexproj", "originator": "codex_cli_rs"}}
+{"timestamp": "2026-11-03T10:00:01Z", "type": "response_item", "payload": {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "You are Codex. Sandbox rules."}]}}
+{"timestamp": "2026-11-03T10:00:01Z", "type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "<environment_context>\n  <cwd>/w/codexproj</cwd>\n</environment_context>"}]}}
+{"timestamp": "2026-11-03T10:00:02Z", "type": "turn_context", "payload": {"cwd": "/w/codexproj", "model": "gpt"}}
+{"timestamp": "2026-11-03T10:00:03Z", "type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Why does the SQLite index live outside the vault folder?"}]}}
+{"timestamp": "2026-11-03T10:00:03Z", "type": "event_msg", "payload": {"type": "user_message", "message": "Why does the SQLite index live outside the vault folder?"}}
+{"timestamp": "2026-11-03T10:00:04Z", "type": "response_item", "payload": {"type": "reasoning", "summary": [{"type": "summary_text", "text": "thinking"}]}}
+{"timestamp": "2026-11-03T10:00:05Z", "type": "response_item", "payload": {"type": "function_call", "name": "shell", "arguments": "{\"command\":[\"ls\"]}", "call_id": "c1"}}
+{"timestamp": "2026-11-03T10:00:06Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "c1", "output": "file-list"}}
+{"timestamp": "2026-11-03T10:00:07Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Because the index is derived data: it can always be rebuilt from the notes, so keeping it out of the vault keeps git history clean and avoids sync conflicts between devices. The api_key=abcdefghijklmnop example stays private."}]}}
+{"timestamp": "2026-11-03T10:00:07Z", "type": "event_msg", "payload": {"type": "agent_message", "message": "Because the index is derived data..."}}
+{"timestamp": "2026-11-03T10:01:00Z", "type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "And what happens if the index file is deleted by accident?"}]}}
+{"timestamp": "2026-11-03T10:01:05Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Nothing is lost. The next zk index run notices the missing file and rebuilds every table from the Markdown notes, including embeddings for notes whose content hash it has not seen."}]}}

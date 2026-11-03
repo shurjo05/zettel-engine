@@ -11,7 +11,11 @@ Read README.md first. Then:
   files. It creates or moves files and never deletes; the one write that changes a file,
   `vault.replace`, needs the content hash the caller read. `ingest.py`, `migrate.py` and
   `resolve.py` write only through it, and only `resolve.merge_held` uses `replace`.
-  `maintain.py` only reads the index. `checks.py` reads the vault and the index and writes only the score
+  `maintain.py` only reads the index. `sessions.py` reads agent transcripts and writes only
+  captures (through `vault.py`) and its record in the zk data folder. `hooks.py` writes the
+  person's agent settings only by adding an entry after a backup, never changing or removing
+  one. `process.py` runs headless agents limited to the zk tools. `hook.py` must stay light
+  (no numpy): session-end hooks get one to three seconds. `checks.py` reads the vault and the index and writes only the score
   history file next to the index.
 - Retrieval changes must be judged with `zk eval`; report before and after numbers in the PR.
 - Tests must use copies of `tests/fixtures/vault` (the `vault` fixture), never a real vault.
