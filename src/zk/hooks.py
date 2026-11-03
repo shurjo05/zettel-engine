@@ -56,6 +56,32 @@ def hook_command(vault_dir: Path, process: bool = True) -> str:
     return command + " --process" if process else command
 
 
+def server_command(vault_dir: Path) -> str:
+    """How to register the write-enabled zk MCP server the headless agents use."""
+    return (
+        f"claude mcp add zk --scope user -- {_arg(python_exe())} -m zk serve "
+        f"{_arg(str(vault_dir.resolve()))} --allow-writes"
+    )
+
+
+def server_ready() -> tuple[bool | None, str]:
+    """Whether Claude Code has a zk server with --allow-writes; None if it can't be asked."""
+    claude = shutil.which("claude")
+    if not claude:
+        return None, "claude is not on PATH, so it couldn't be checked"
+    try:
+        done = subprocess.run(
+            [claude, "mcp", "get", "zk"], capture_output=True, text=True, timeout=30
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"couldn't ask claude ({exc})"
+    if done.returncode != 0:
+        return False, "no MCP server named zk is registered with Claude Code"
+    if "--allow-writes" not in done.stdout:
+        return False, "the zk MCP server is registered without --allow-writes"
+    return True, "registered with --allow-writes"
+
+
 def _is_zk(command: str) -> bool:
     return "zk.hook" in command or ("zk capture" in command and "--hook" in command)
 

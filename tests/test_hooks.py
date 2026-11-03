@@ -139,3 +139,13 @@ def test_default_agents_are_marked_and_limited_to_zk_tools():
     commands = process.default_commands("opus")
     assert commands["ingest"][2].startswith("[zk]") and "mcp__zk" in commands["ingest"]
     assert commands["resolve"][-2:] == ["--model", "opus"]
+
+
+def test_installs_warn_when_headless_runs_have_no_zk_server(vault, monkeypatch, capsys):
+    monkeypatch.setattr(hooks, "server_ready", lambda: (False, "no MCP server named zk"))
+    assert main(["hooks", "install", str(vault), "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "warning: no MCP server named zk" in out
+    assert "claude mcp add zk --scope user --" in out and "--allow-writes" in out
+    assert main(["hooks", "install", str(vault), "--no-process", "--dry-run"]) == 0
+    assert "warning" not in capsys.readouterr().out

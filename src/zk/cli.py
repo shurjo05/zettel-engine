@@ -18,6 +18,7 @@ from pathlib import Path
 
 from zk import capture, checks, evaluate, hooks, lookup, maintain, migrate, process, sessions, vault
 from zk.embed import DEFAULT_MODEL, FastEmbedder, update_embeddings
+from zk.hook import read_event
 from zk.index import (
     DEFAULT_EXCLUDES,
     build_index,
@@ -237,7 +238,7 @@ def cmd_capture(args: argparse.Namespace) -> int:
             path = vault.write_new(args.vault, vault.unique_path(args.vault, name), text)
         else:
             if args.hook:
-                saved, why = sessions.from_hook(args.vault, json.load(sys.stdin), now)
+                saved, why = sessions.from_hook(args.vault, read_event(), now)
             else:
                 saved, why = sessions.capture_session(
                     args.vault, sessions.describe(args.transcript), now
@@ -325,6 +326,8 @@ def cmd_hooks(args: argparse.Namespace) -> int:
             print(f"  backup: {result['backup']}")
         for command in result["commands"]:
             print(f"  {command}")
+        if agent == "claude" and not args.no_process:
+            _warn_if_no_server(args.vault)
         if agent == "codex" and result["action"] == "added":
             print("  Codex runs a new hook only after you trust it: /hooks in the CLI, or")
             print("  Settings > Hooks in the app.")
@@ -344,6 +347,8 @@ def _hooks_status(vault_dir: Path | None) -> int:
             print(f"  {command}")
     task = hooks.schedule_status()
     print(f"scheduled catch-up: {'installed' if task else 'not installed'}")
+    ready, detail = hooks.server_ready()
+    print(f"zk server for headless runs: {detail}")
     record = sessions.load_record()
     captures = sorted(
         (v.get("checked", ""), v["capture"]) for v in record.values() if v.get("capture")
@@ -366,6 +371,13 @@ def _hooks_status(vault_dir: Path | None) -> int:
     return 0
 
 
+def _warn_if_no_server(vault_dir: Path) -> None:
+    ready, detail = hooks.server_ready()
+    if ready is False:
+        print(f"  warning: {detail}. Until it is, zk process can't write notes. Register it with:")
+        print(f"  {hooks.server_command(vault_dir)}")
+
+
 def cmd_schedule(args: argparse.Namespace) -> int:
     """Install, show or remove the daily catch-up task (Windows Task Scheduler)."""
     if args.action == "status":
@@ -380,6 +392,7 @@ def cmd_schedule(args: argparse.Namespace) -> int:
         sys.exit("zk schedule install: give the vault folder")
     if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", args.at):
         sys.exit("zk schedule install: --at takes a time like 21:00")
+    _warn_if_no_server(args.vault)
     result = hooks.install_schedule(args.vault, args.at, data_dir(), args.dry_run)
     if result["action"] == "added":
         print(f"zk schedule: added the task {result['task']!r}, daily at {result['at']}")

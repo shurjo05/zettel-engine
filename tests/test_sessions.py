@@ -147,3 +147,13 @@ def test_a_turn_that_grew_after_capture_keeps_only_its_new_end():
     assert [(t.role, t.text) for t in sessions._new_turns(grown, seen)] == [
         ("assistant", "more detail")
     ]
+
+
+def test_hook_entry_accepts_a_byte_order_mark(vault, monkeypatch, capsys):
+    class Stdin:
+        buffer = io.BytesIO(b"\xef\xbb\xbf" + json.dumps({"transcript_path": str(CLAUDE)}).encode())
+
+    monkeypatch.setattr("sys.stdin", Stdin())
+    monkeypatch.delenv("ZK_INGESTING", raising=False)
+    assert hook.main([str(vault)]) == 0
+    assert "saved" in capsys.readouterr().err

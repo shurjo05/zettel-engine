@@ -73,3 +73,11 @@ def isolated_homes(tmp_path_factory, monkeypatch):
     ]:
         monkeypatch.setenv(var, str(base / name))
     return base
+
+
+@pytest.fixture(autouse=True)
+def no_claude_calls(monkeypatch):
+    """Tests never ask a real Claude Code install about its MCP servers."""
+    from zk import hooks
+
+    monkeypatch.setattr(hooks, "server_ready", lambda: (None, "not checked in tests"))

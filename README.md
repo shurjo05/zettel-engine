@@ -185,12 +185,13 @@ run sends the held notes and their closest notes to the model's provider (see
 
 ### Running on its own
 
-Three commands make the whole loop run without you: capture each session when it ends, turn
-captures into notes, and resolve any notes held as duplicates. Run the first with `--dry-run` to
+These commands make the whole loop run without you: capture each session when it ends, turn
+captures into notes, and resolve any notes held as duplicates. Run `zk hooks install` with `--dry-run` first to
 see the change before making it.
 
 ```bat
 cd C:\path\to\zettel-engine
+claude mcp add zk --scope user -- uv --directory C:\path\to\zettel-engine run zk serve C:\path\to\vault --allow-writes
 uv run zk hooks install C:\path\to\vault --codex --dry-run
 uv run zk hooks install C:\path\to\vault --codex
 uv run zk schedule install C:\path\to\vault --at 21:00
@@ -220,8 +221,9 @@ uv run zk hooks status C:\path\to\vault
   `zk process --catch-up`. If the PC was off at that time, it runs at the next chance.
   `zk schedule status` and `zk schedule remove` go with it. Elsewhere it prints a cron line.
 
-Logs go to the zk data folder's `logs/`. The headless agents need the zk server registered for
-your user with `--allow-writes` (see above). Sessions in the cloud (claude.ai/code) can't be
+Logs go to the zk data folder's `logs/`. The headless agents use the zk server registered on the
+first line, so both installs warn when it's missing or lacks `--allow-writes`, and
+`zk hooks status` says whether it's there. Sessions in the cloud (claude.ai/code) can't be
 captured, since their transcripts aren't on your machine.
 
 The older `zk capture --hook [--then COMMAND]` still works.
