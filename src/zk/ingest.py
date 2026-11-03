@@ -221,7 +221,7 @@ def ingest(
     ]
     if refresh is not None:
         refresh()
-        warnings += checks.check_new_notes(conn, notes)
+        warnings += checks.check_new_notes(conn, notes, embedder)
         if history is not None:
             warnings += checks.check_scores(conn, vault_dir, history, embedder, now)
     result = {"notes": notes, "held": held, "questions": questions_file, "warnings": warnings}

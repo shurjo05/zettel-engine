@@ -20,7 +20,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
-from zk import ingest, lookup, resolve
+from zk import ingest, lookup, maintain, resolve
 from zk.checks import history_path
 from zk.embed import Embedder, update_embeddings
 from zk.index import build_index, open_db
@@ -123,6 +123,19 @@ def create_server(
             ],
             embed=mode != "keyword",
         )
+
+    if embedder is not None:
+
+        @server.tool(annotations=READ_ONLY, structured_output=False)
+        def suggest_links(note: str, k: int = 3) -> str:
+            """Notes similar in meaning to `note` that it isn't linked with yet, most similar
+            first, each with its cosine similarity. Use it to link a note into the vault."""
+            k = max(1, min(k, 10))
+
+            def go(c: sqlite3.Connection):
+                return maintain.suggest_for(c, embedder, lookup.resolve(c, note), k)
+
+            return run(go, embed=True)
 
     @server.tool(annotations=READ_ONLY, structured_output=False)
     def get_note(note: str) -> str:

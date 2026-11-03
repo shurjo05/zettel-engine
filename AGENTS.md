@@ -10,7 +10,8 @@ Read README.md first. Then:
   `--allow-writes` is given. Only `vault.py` may write vault
   files. It creates or moves files and never deletes; the one write that changes a file,
   `vault.replace`, needs the content hash the caller read. `ingest.py`, `migrate.py` and
-  `resolve.py` write only through it, and only `resolve.merge_held` uses `replace`. `checks.py` reads the vault and the index and writes only the score
+  `resolve.py` write only through it, and only `resolve.merge_held` uses `replace`.
+  `maintain.py` only reads the index. `checks.py` reads the vault and the index and writes only the score
   history file next to the index.
 - Retrieval changes must be judged with `zk eval`; report before and after numbers in the PR.
 - Tests must use copies of `tests/fixtures/vault` (the `vault` fixture), never a real vault.

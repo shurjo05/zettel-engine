@@ -178,3 +178,13 @@ def test_held_pair_judged_and_merged_over_mcp(vault, tmp_path, embedder):
         call(server, "search_notes", {"query": "saturating", "mode": "keyword"}).content[0].text
     )
     assert hits[0]["path"] == "notes/bm25-ranking.md"
+
+
+def test_suggest_links_lists_unlinked_similar_notes(vault, tmp_path, embedder):
+    server = create_server(vault, tmp_path / "index.sqlite", DEFAULT_EXCLUDES, embedder=embedder)
+    result = call(server, "suggest_links", {"note": "orphan-note", "k": 2})
+    assert not result.is_error, result.content[0].text
+    found = json.loads(result.content[0].text)
+    assert len(found) == 2 and found[0]["similarity"] >= found[1]["similarity"]
+    plain = {t.name for t in tools(make(vault, tmp_path))}
+    assert "suggest_links" not in plain  # needs semantic search
