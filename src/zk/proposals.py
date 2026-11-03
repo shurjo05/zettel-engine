@@ -58,11 +58,13 @@ def render(
     created: str | None = None,
     updated: str | None = None,
     name: str | None = None,
+    note_id: str | None = None,
 ) -> tuple[str, str]:
     """(file name, Markdown) for a draft. Raises InvalidProposal if it isn't clean.
 
     The id comes from `now`; `created`, `updated` (ISO dates) and the file name
-    default to today and the title's slug, and an import passes the old ones.
+    default to today and the title's slug, and an import passes the old ones. A
+    merge passes the existing note's `note_id`, name and dates so the note keeps them.
     """
     p = proposal
     problems = []
@@ -80,7 +82,7 @@ def render(
         raise InvalidProposal("; ".join(problems))
 
     front = {
-        "id": now.strftime("%Y%m%d%H%M%S"),
+        "id": note_id or now.strftime("%Y%m%d%H%M%S"),
         "title": p.title.strip(),
         "type": p.type,
         "tags": [t.strip().lstrip("#") for t in p.tags if t.strip()],

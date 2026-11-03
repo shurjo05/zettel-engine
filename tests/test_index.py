@@ -33,6 +33,17 @@ def test_build_then_rebuild_is_incremental(vault, tmp_path):
     assert (third.updated, third.removed, third.unchanged) == (1, 1, 8)
 
 
+def test_a_changed_note_on_a_fresh_index_keeps_only_its_new_links(vault, tmp_path):
+    conn = open_db(tmp_path / "fresh.sqlite")  # created now, so the schema was just reset
+    build_index(conn, vault)
+    (vault / "notes" / "embeddings.md").write_text(
+        "---\nid: 1\n---\n# Changed\n\n[[bm25-ranking]]\n", encoding="utf-8"
+    )
+    build_index(conn, vault)
+    rows = conn.execute("SELECT target FROM links WHERE src_path = 'notes/embeddings.md'")
+    assert [r["target"] for r in rows] == ["bm25-ranking"]
+
+
 def test_indexing_never_writes_to_the_vault(vault, tmp_path):
     before = snapshot(vault)
     conn = open_db(tmp_path / "index.sqlite")

@@ -148,7 +148,9 @@ def _reset(conn: sqlite3.Connection) -> None:
             conn.execute(f'DROP TABLE IF EXISTS "{name}"')
         conn.executescript(_SCHEMA)
         conn.execute("INSERT INTO meta VALUES ('schema_version', ?)", (SCHEMA_VERSION,))
-        conn.execute("PRAGMA foreign_keys = ON")
+    # Outside the transaction: inside one, SQLite ignores this pragma, and a fresh
+    # index would then keep a changed note's old links and issues alongside the new.
+    conn.execute("PRAGMA foreign_keys = ON")
 
 
 def iter_note_files(vault: Path, excludes: Iterable[str] = DEFAULT_EXCLUDES) -> Iterator[Path]:

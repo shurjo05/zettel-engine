@@ -148,3 +148,33 @@ def test_ingest_over_mcp_writes_and_is_searchable_at_once(vault, tmp_path, embed
     assert sorted((vault / "notes").glob("rank-fusion*")) == [
         vault / "notes" / "rank-fusion-needs-only-ranks.md"
     ]
+
+
+def test_held_pair_judged_and_merged_over_mcp(vault, tmp_path, embedder):
+    held = vault / "inbox" / "held"
+    held.mkdir(parents=True)
+    (held / "okapi.md").write_text(
+        (vault / "notes" / "bm25-ranking.md")
+        .read_text(encoding="utf-8")
+        .replace("20261015100000", "20261101090000")
+        .replace("BM25 Ranking", "Okapi"),
+        encoding="utf-8",
+    )
+    server = create_server(
+        vault, tmp_path / "index.sqlite", DEFAULT_EXCLUDES, embedder=embedder, allow_writes=True
+    )
+    pair = json.loads(call(server, "get_held_pair", {"name": "okapi"}).content[0].text)
+    assert pair["closest"]["path"] == "notes/bm25-ranking.md"
+    note = {
+        "title": "BM25 Ranking",
+        "type": "concept",
+        "summary": "BM25 sums saturating term weights, normalized by document length.",
+    }
+    args = {"name": "okapi", "into": pair["closest"]["path"], "note": note, "reason": "reworded"}
+    result = call(server, "merge_held", args)
+    assert not result.is_error, result.content[0].text
+    assert json.loads(result.content[0].text)["held_moved_to"] == "inbox/merged/okapi.md"
+    hits = json.loads(
+        call(server, "search_notes", {"query": "saturating", "mode": "keyword"}).content[0].text
+    )
+    assert hits[0]["path"] == "notes/bm25-ranking.md"

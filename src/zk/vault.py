@@ -1,12 +1,16 @@
 """The only module that writes to the vault.
 
-Every write creates a new file and never replaces one: the target name must not
-exist yet, and the content appears all at once (written to a temporary file,
-then hard-linked into place), so a crash cannot leave half a note behind.
+Writes create a new file or move one, and never delete. The content appears all
+at once (written to a temporary file, then hard-linked or renamed into place),
+so a crash cannot leave half a note behind. The one write that changes an
+existing file, `replace`, does so only if the file still has the content the
+caller read, so an edit made in the meantime is never lost; git keeps the old
+version.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 import tempfile
@@ -54,6 +58,28 @@ def write_new(vault: Path, rel: str, text: str) -> Path:
                 os.rename(tmp, target)  # no hard links here; on Windows rename never replaces
         except FileExistsError:
             raise VaultWriteError(f"{rel} already exists; zk never overwrites a file") from None
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    return target
+
+
+def replace(vault: Path, rel: str, text: str, expected_hash: str) -> Path:
+    """Replace the existing file vault/rel with `text`, atomically.
+
+    Refuses unless the file's current SHA-256 is `expected_hash` (what the
+    caller read), so a change made since then, say in Obsidian, is not lost.
+    """
+    target = _inside(vault, Path(rel))
+    if not target.is_file():
+        raise VaultWriteError(f"{rel} does not exist; replace only changes an existing file")
+    if hashlib.sha256(target.read_bytes()).hexdigest() != expected_hash:
+        raise VaultWriteError(f"{rel} changed since it was read; read it again")
+    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".zk-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        os.replace(tmp, target)
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
