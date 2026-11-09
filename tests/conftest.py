@@ -60,3 +60,23 @@ def no_model_downloads(monkeypatch):
     from zk import cli
 
     monkeypatch.setattr(cli, "make_embedder", lambda model: WordEmbedder(model))
+
+
+@pytest.fixture(autouse=True)
+def isolated_homes(tmp_path_factory, monkeypatch):
+    """zk's data folder and Claude Code's config folder point at throwaway folders."""
+    base = tmp_path_factory.mktemp("homes")
+    for var, name in [
+        ("ZK_DATA_DIR", "zk"),
+        ("CLAUDE_CONFIG_DIR", "claude"),
+    ]:
+        monkeypatch.setenv(var, str(base / name))
+    return base
+
+
+@pytest.fixture(autouse=True)
+def no_claude_calls(monkeypatch):
+    """Tests never ask a real Claude Code install about its MCP servers."""
+    from zk import hooks
+
+    monkeypatch.setattr(hooks, "server_ready", lambda: (None, "not checked in tests"))

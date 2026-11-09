@@ -218,3 +218,43 @@ def test_names_cannot_escape_the_inbox(setup):
             ingest.apply_held(vault, bad)
         with pytest.raises((ValueError, FileNotFoundError, VaultWriteError)):
             ingest.ingest(vault, conn, embedder, [draft()], capture=bad)
+
+
+def test_a_discarded_capture_is_committed(setup):
+    vault, conn, embedder = setup
+    init_repo(vault)
+    ingest.discard(vault, CAPTURE, kind="capture")
+    assert (
+        git(vault, "log", "-1", "--format=%s").stdout.strip() == f"zk: set aside capture {CAPTURE}"
+    )
+    assert f"inbox/processed/{CAPTURE}" not in git(vault, "status", "--porcelain").stdout
+
+
+def test_links_between_new_notes_use_the_names_they_get(setup):
+    """On the first real run the agent guessed a shorter name for the other new note."""
+    vault, conn, embedder = setup
+    first = draft(
+        title="Liskov Substitution Violations",
+        summary="A subclass that refuses an inherited operation breaks its callers.",
+        links={"interfaces-over-inheritance": "the fix", "reciprocal-rank-fusion": "unrelated"},
+    )
+    second = draft(
+        title="Interfaces Over Inheritance To Enforce Contracts",
+        summary="Small interfaces state a contract without forcing a hierarchy on anyone.",
+        links={"Liskov Substitution Violations": "the problem it solves"},
+        questions=["when should I prefer an interface to a base class?"],
+    )
+    result = ingest.ingest(
+        vault, conn, embedder, [first, second], refresh=refresher(vault, conn, embedder)
+    )
+    texts = {Path(p).stem: (vault / p).read_text(encoding="utf-8") for p in result["notes"]}
+    assert (
+        "[[interfaces-over-inheritance-to-enforce-contracts]]"
+        in texts["liskov-substitution-violations"]
+    )
+    assert "[[reciprocal-rank-fusion]]" in texts["liskov-substitution-violations"]
+    assert (
+        "[[liskov-substitution-violations]]"
+        in texts["interfaces-over-inheritance-to-enforce-contracts"]
+    )
+    assert not any("broken link" in w.lower() for w in result["warnings"])

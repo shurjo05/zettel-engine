@@ -326,3 +326,31 @@ def _add_ingest_tools(
         if kind not in ("held", "capture"):
             raise ToolError('kind must be "held" or "capture"')
         return run(lambda c: {"moved_to": ingest.discard(vault, name, kind)})
+
+
+def run_stdio(server: MCPServer) -> None:
+    """Serve one stdio connection in the MCP handshake (`initialize`) protocol only.
+
+    The SDK's default loop lets the client's first request pick the protocol
+    era for good. Some Claude Code versions open with a 2026-07-28 request and
+    then fall back to `initialize`, which that loop refuses ("the initialize
+    handshake is not accepted"), so the server never connects. Serving only the
+    handshake era turns the opening request away and accepts the fallback.
+    """
+    import anyio
+    from mcp.server.runner import serve_loop
+    from mcp.server.stdio import stdio_server
+
+    low = server._lowlevel_server  # the SDK has no public switch for this
+
+    async def main() -> None:
+        async with stdio_server() as (read, write), low.lifespan(low) as state:
+            await serve_loop(
+                low,
+                read,
+                write,
+                lifespan_state=state,
+                init_options=low.create_initialization_options(),
+            )
+
+    anyio.run(main)

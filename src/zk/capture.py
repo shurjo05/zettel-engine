@@ -1,7 +1,7 @@
 """Turn a Claude Code session transcript (or free text) into an inbox capture.
 
-Pure functions: parsing, redaction and rendering take and return strings. The
-CLI reads the transcript and `zk.vault` writes the capture.
+Pure functions: parsing, redaction and rendering take and return strings.
+`zk.sessions` finds and reads transcripts, and `zk.vault` writes the capture.
 
 A transcript is JSONL, one event per line. Only the conversation is kept: the
 person's messages and the assistant's text replies. Tool calls and results,
@@ -37,6 +37,9 @@ _WRAPPERS = re.compile(
     r"<(system-reminder|session-context|command-[a-z-]+|local-command-[a-z-]+)\b[^>]*>.*?</\1>",
     re.S,
 )
+# The prompts zk gives its own headless agents start with this, so a scan of old
+# transcripts can tell zk's sessions apart from the person's.
+ZK_MARKER = "[zk]"
 
 
 @dataclass
@@ -69,25 +72,48 @@ def _text_of(content) -> str:
 def parse_transcript(lines: Iterable[str]) -> list[Turn]:
     """The conversation in a Claude Code transcript, consecutive same-role turns merged."""
     turns: list[Turn] = []
+    for event in _events(lines):
+        if event.get("type") not in ("user", "assistant"):
+            continue
+        if event.get("isSidechain") or event.get("isMeta"):
+            continue
+        message = event.get("message") or {}
+        _add(turns, event["type"], _text_of(message.get("content")))
+    return turns
+
+
+def _events(lines: Iterable[str]) -> Iterable[dict]:
     for line in lines:
         try:
             event = json.loads(line)
         except (json.JSONDecodeError, TypeError):
             continue
-        if not isinstance(event, dict) or event.get("type") not in ("user", "assistant"):
-            continue
-        if event.get("isSidechain") or event.get("isMeta"):
-            continue
-        message = event.get("message") or {}
-        text = _WRAPPERS.sub("", _text_of(message.get("content"))).strip()
-        if not text:
-            continue
-        role = event["type"]
-        if turns and turns[-1].role == role:
-            turns[-1].text += "\n\n" + text
-        else:
-            turns.append(Turn(role, text))
-    return turns
+        if isinstance(event, dict):
+            yield event
+
+
+def _add(turns: list[Turn], role: str, text: str) -> None:
+    text = _WRAPPERS.sub("", text).strip()
+    if not text:
+        return
+    if turns and turns[-1].role == role:
+        turns[-1].text += "\n\n" + text
+    else:
+        turns.append(Turn(role, text))
+
+
+def claude_cwd(lines: Iterable[str]) -> str | None:
+    """The working folder recorded on a Claude Code transcript's events."""
+    for event in _events(lines):
+        if isinstance(event.get("cwd"), str):
+            return event["cwd"]
+    return None
+
+
+def is_zk_session(turns: list[Turn]) -> bool:
+    """A session zk started itself (its prompt begins with ZK_MARKER)."""
+    first = next((t for t in turns if t.role == "user"), None)
+    return first is not None and first.text.lstrip().startswith(ZK_MARKER)
 
 
 def worth_keeping(turns: list[Turn]) -> tuple[bool, str]:
