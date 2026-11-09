@@ -137,6 +137,24 @@ def test_calibration_warns_when_precision_drops():
     found = calibrate.warnings(report)
     assert any("Consider raising it" in w for w in found)
     assert any("consider lowering it" in w for w in found)
+    assert calibrate.thin(report) == []
+
+
+def test_a_band_with_too_few_pairs_is_flagged_but_not_warned_on():
+    # What the real vault gave on 2026-11-09: 0 of 3 pairs just above the duplicate cut.
+    report = {
+        "duplicate": {
+            "at": 0.85,
+            "by_hand": 0.6,
+            "above": {"judged": 3, "hits": 0, "precision": 0.0},
+            "below": {"judged": 6, "hits": 0, "precision": 0.0},
+        }
+    }
+    assert calibrate.warnings(report) == []
+    assert calibrate.thin(report) == [
+        "duplicate cut 0.85: 0 of 3 pairs just above it are hits, against 60% by hand; "
+        "too few pairs to warn on yet"
+    ]
 
 
 def test_drift_reads_the_vault_history(vault):

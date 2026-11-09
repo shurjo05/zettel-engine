@@ -188,6 +188,24 @@ def warnings(report: dict, min_judged: int = 5) -> list[str]:
     return out
 
 
+def thin(report: dict, min_judged: int = 5) -> list[str]:
+    """Bands that point the way a warning would but hold too few pairs to warn on."""
+    out = []
+    for cut, r in report.items():
+        for side in ("above", "below"):
+            s = r[side]
+            if not 0 < s["judged"] < min_judged:
+                continue
+            if (side == "above" and s["precision"] < r["by_hand"]) or (
+                side == "below" and s["precision"] >= r["by_hand"]
+            ):
+                out.append(
+                    f"{cut} cut {r['at']}: {s['hits']} of {s['judged']} pairs just {side} it are "
+                    f"hits, against {r['by_hand']:.0%} by hand; too few pairs to warn on yet"
+                )
+    return out
+
+
 def drift(vault_dir: Path) -> dict:
     """Signals from the vault's git history that need no model."""
     try:
@@ -266,6 +284,7 @@ def run(
         "unjudged": sum(1 for p in pairs if not p.get("label")),
         "cuts": report,
         "warnings": warnings(report),
+        "too_few": thin(report),
         "drift": drift(vault_dir),
         **written,
     }
@@ -298,6 +317,9 @@ def format_calibration(result: dict) -> str:
         ]
     if result["warnings"]:
         lines += ["", "warnings:"] + [f"  - {w}" for w in result["warnings"]]
+    if result.get("too_few"):
+        lines += ["", "worth watching (too few pairs to warn on):"]
+        lines += [f"  - {w}" for w in result["too_few"]]
     if result.get("file"):
         lines += ["", f"labels saved to {result['file']}"]
     return "\n".join(lines)

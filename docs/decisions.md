@@ -383,3 +383,15 @@ The plan's last milestone asked for tokens per task, latency, citation accuracy 
   saved with content hashes and reused, so the labelled set grows and each run only pays for new
   pairs. The resolver's released/merged ratio from git history is a free, continuous measure of
   false duplicate holds.
+- **A band with too few pairs is shown, not warned on.** Warnings need at least 5 judged pairs
+  in a band. A smaller band that points the same way is listed as "worth watching", so a quiet
+  report doesn't read as a clean one.
+
+First measurements (2026-11-09). The real vault (95 notes, 4 test questions, hybrid): the zk tools
+used a median 1,435 tokens to reach the answer, 3.1% of the vault, against 3,982 (8.6%) for naive
+RAG. The legacy copy with its 30 questions (keyword only, in the cloud): 1,671 tokens (2.4%)
+against 5,550 (7.9%), with the answer in the top 5 for 83%. Answers on the 4 questions: every
+answer cited a relevant note and only notes it was given. Calibration judged 33 pairs: link and
+parent hold up (6/6 and 5/6 above their cuts), and the duplicate cut had 0 of 3 pairs above it
+judged the same idea, which matches the resolver releasing 3 of its 6 holds. That is the cut to
+watch; it stays at 0.85 until more pairs are judged.
