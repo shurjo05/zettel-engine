@@ -1,4 +1,4 @@
-"""Turn a Claude Code or Codex session transcript (or free text) into an inbox capture.
+"""Turn a Claude Code session transcript (or free text) into an inbox capture.
 
 Pure functions: parsing, redaction and rendering take and return strings.
 `zk.sessions` finds and reads transcripts, and `zk.vault` writes the capture.
@@ -33,10 +33,8 @@ _SECRETS = [
     ),
 ]
 # Harness blocks that wrap or precede what the person typed; not their words.
-# The last four are Codex's: its environment, AGENTS.md and an interrupted turn.
 _WRAPPERS = re.compile(
-    r"<(system-reminder|session-context|command-[a-z-]+|local-command-[a-z-]+"
-    r"|environment_context|user_instructions|INSTRUCTIONS|turn_aborted)\b[^>]*>.*?</\1>",
+    r"<(system-reminder|session-context|command-[a-z-]+|local-command-[a-z-]+)\b[^>]*>.*?</\1>",
     re.S,
 )
 # The prompts zk gives its own headless agents start with this, so a scan of old
@@ -102,61 +100,6 @@ def _add(turns: list[Turn], role: str, text: str) -> None:
         turns[-1].text += "\n\n" + text
     else:
         turns.append(Turn(role, text))
-
-
-def parse_codex(lines: Iterable[str]) -> list[Turn]:
-    """The conversation in a Codex rollout file.
-
-    Each line is {timestamp, type, payload}. Messages are `response_item`
-    payloads of type "message" with role user or assistant (developer and system
-    messages are instructions, not conversation). Codex also logs each message
-    as an `event_msg` (user_message, agent_message); those are used only when a
-    file has no response items. The format is not a stable interface, so
-    anything unrecognised is skipped rather than guessed at.
-    """
-    items: list[Turn] = []
-    echoes: list[Turn] = []
-    for event in _events(lines):
-        payload = event.get("payload")
-        if not isinstance(payload, dict):
-            continue
-        if event.get("type") == "response_item" and payload.get("type") == "message":
-            if payload.get("role") in ("user", "assistant"):
-                content = payload.get("content")
-                if isinstance(content, list):
-                    text = "\n\n".join(
-                        b.get("text", "")
-                        for b in content
-                        if isinstance(b, dict) and b.get("type") in ("input_text", "output_text")
-                    )
-                else:
-                    text = content if isinstance(content, str) else ""
-                _add(items, payload["role"], text)
-        elif event.get("type") == "event_msg":
-            role = {"user_message": "user", "agent_message": "assistant"}.get(payload.get("type"))
-            if role and isinstance(payload.get("message"), str):
-                _add(echoes, role, payload["message"])
-    return items or echoes
-
-
-def is_codex(first_lines: Iterable[str]) -> bool:
-    """True if a transcript looks like a Codex rollout ({timestamp, type, payload} lines)."""
-    for event in _events(first_lines):
-        return "payload" in event and event.get("type") in (
-            "session_meta",
-            "response_item",
-            "event_msg",
-            "turn_context",
-        )
-    return False
-
-
-def codex_meta(lines: Iterable[str]) -> dict:
-    """The session id and working folder from a Codex rollout's session_meta line."""
-    for event in _events(lines):
-        if event.get("type") == "session_meta" and isinstance(event.get("payload"), dict):
-            return {k: event["payload"].get(k) for k in ("id", "cwd")}
-    return {}
 
 
 def claude_cwd(lines: Iterable[str]) -> str | None:

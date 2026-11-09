@@ -307,44 +307,38 @@ def cmd_process(args: argparse.Namespace) -> int:
 
 
 def cmd_hooks(args: argparse.Namespace) -> int:
-    """Install or show zk's session-end hooks for Claude Code and Codex."""
-    agents = ["claude", "codex"] if args.codex else ["claude"]
+    """Install or show zk's Claude Code session-end hook."""
     if args.action == "status":
         return _hooks_status(args.vault)
-    if not args.vault.is_dir():
-        sys.exit(f"zk: {args.vault} is not a folder")
-    for agent in agents:
-        try:
-            result = hooks.install(agent, args.vault, not args.no_process, args.dry_run)
-        except ValueError as exc:
-            print(f"zk hooks: {exc}", file=sys.stderr)
-            return 1
-        print(f"{agent}: {result['action']} in {result['path']}")
-        if args.dry_run and result.get("diff"):
-            print(result["diff"])
-        if result.get("backup"):
-            print(f"  backup: {result['backup']}")
-        for command in result["commands"]:
-            print(f"  {command}")
-        if agent == "claude" and not args.no_process:
-            _warn_if_no_server(args.vault)
-        if agent == "codex" and result["action"] == "added":
-            print("  Codex runs a new hook only after you trust it: /hooks in the CLI, or")
-            print("  Settings > Hooks in the app.")
+    if args.vault is None or not args.vault.is_dir():
+        sys.exit("zk hooks install: give the vault folder")
+    try:
+        result = hooks.install(args.vault, not args.no_process, args.dry_run)
+    except ValueError as exc:
+        print(f"zk hooks: {exc}", file=sys.stderr)
+        return 1
+    print(f"claude: {result['action']} in {result['path']}")
+    if args.dry_run and result.get("diff"):
+        print(result["diff"])
+    if result.get("backup"):
+        print(f"  backup: {result['backup']}")
+    for command in result["commands"]:
+        print(f"  {command}")
+    if not args.no_process:
+        _warn_if_no_server(args.vault)
     return 0
 
 
 def _hooks_status(vault_dir: Path | None) -> int:
-    for agent in ("claude", "codex"):
-        try:
-            found = hooks.installed(agent)
-        except ValueError as exc:
-            found, note = [], str(exc)
-        else:
-            note = "installed" if found else "not installed"
-        print(f"{agent} hook: {note} ({hooks.settings_path(agent)})")
-        for command in found:
-            print(f"  {command}")
+    try:
+        found = hooks.installed()
+    except ValueError as exc:
+        found, note = [], str(exc)
+    else:
+        note = "installed" if found else "not installed"
+    print(f"claude hook: {note} ({hooks.settings_path()})")
+    for command in found:
+        print(f"  {command}")
     task = hooks.schedule_status()
     print(f"scheduled catch-up: {'installed' if task else 'not installed'}")
     ready, detail = hooks.server_ready()
@@ -443,7 +437,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
         embedder=make_embedder(args.model),
         allow_writes=args.allow_writes,
     )
-    server.run("stdio")
+    from zk.server import run_stdio
+
+    run_stdio(server)
     return 0
 
 
@@ -598,15 +594,13 @@ def main(argv: list[str] | None = None) -> int:
     p_capture = sub.add_parser("capture", help="save a session or text into the vault inbox")
     p_capture.add_argument("vault", type=Path, help="path to the vault folder")
     src = p_capture.add_mutually_exclusive_group(required=True)
-    src.add_argument(
-        "--hook", action="store_true", help="read a Claude Code or Codex hook event on stdin"
-    )
-    src.add_argument("--transcript", type=Path, help="a Claude Code or Codex transcript (.jsonl)")
+    src.add_argument("--hook", action="store_true", help="read a Claude Code hook event on stdin")
+    src.add_argument("--transcript", type=Path, help="a Claude Code transcript (.jsonl)")
     src.add_argument("--text", help="free text to capture, e.g. from Codex or by hand")
     src.add_argument(
         "--catch-up",
         action="store_true",
-        help="capture recent Claude Code and Codex sessions that no hook captured",
+        help="capture recent Claude Code sessions that no hook captured",
     )
     p_capture.add_argument("--source", help="label for --text captures (default manual)")
     p_capture.add_argument(
@@ -643,10 +637,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_process.set_defaults(func=cmd_process)
 
-    p_hooks = sub.add_parser("hooks", help="install or show the session-end hooks")
+    p_hooks = sub.add_parser("hooks", help="install or show the Claude Code session-end hook")
     p_hooks.add_argument("action", choices=["install", "status"])
     p_hooks.add_argument("vault", type=Path, nargs="?", help="path to the vault folder")
-    p_hooks.add_argument("--codex", action="store_true", help="install for Codex too")
     p_hooks.add_argument(
         "--no-process",
         action="store_true",

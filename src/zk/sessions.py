@@ -2,7 +2,7 @@
 
 Two ways in, sharing one record of what was captured:
 - the session-end hook (`python -m zk.hook`) captures the session that just ended;
-- `catch_up` scans recent Claude Code and Codex transcripts for sessions no hook
+- `catch_up` scans recent Claude Code transcripts for sessions no hook
   captured (an app where the hook didn't run, a crash, a machine that was off).
 
 The record (`sessions.json` in the zk data folder) keeps, per session, how many
@@ -35,7 +35,7 @@ IDLE_MINUTES = 30  # a transcript touched more recently may still be in use
 
 @dataclass
 class Session:
-    kind: str  # "claude" or "codex"
+    kind: str  # "claude"; the record is keyed by agent so others can be added
     path: Path
     session_id: str
     project: str | None = None
@@ -43,10 +43,6 @@ class Session:
 
 def claude_home() -> Path:
     return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
-
-
-def codex_home() -> Path:
-    return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
 
 
 def _clean_id(raw: str) -> str:
@@ -59,34 +55,18 @@ def _head(path: Path, n: int = 50) -> list[str]:
 
 
 def describe(path: Path, session_id: str | None = None, cwd: str | None = None) -> Session:
-    """What a transcript file is: which agent wrote it, its session id and project."""
-    head = _head(path)
-    if capture.is_codex(head):
-        meta = capture.codex_meta(head)
-        sid = session_id or meta.get("id") or path.stem[-36:]
-        cwd = cwd or meta.get("cwd")
-        kind = "codex"
-    else:
-        sid = session_id or path.stem
-        cwd = cwd or capture.claude_cwd(head)
-        kind = "claude"
+    """A Claude Code transcript's session id and project."""
+    cwd = cwd or capture.claude_cwd(_head(path))
     project = Path(cwd).name if cwd else None
-    return Session(kind, path, _clean_id(str(sid)), project or None)
+    return Session("claude", path, _clean_id(str(session_id or path.stem)), project or None)
 
 
 def transcripts(days: float, now: float | None = None) -> list[Path]:
-    """Claude Code and Codex transcripts changed in the last `days` days, oldest first."""
+    """Claude Code transcripts changed in the last `days` days, oldest first."""
     now = time.time() if now is None else now
     found = list((claude_home() / "projects").glob("*/*.jsonl"))  # subagents sit deeper
-    found += (codex_home() / "sessions").glob("**/rollout-*.jsonl")
     recent = [(p.stat().st_mtime, p) for p in found if now - p.stat().st_mtime <= days * 86400]
     return [p for _, p in sorted(recent)]
-
-
-def find_codex(session_id: str) -> Path | None:
-    """A Codex rollout by session id, for hooks that send no transcript path."""
-    matches = sorted((codex_home() / "sessions").glob(f"**/rollout-*{session_id}*.jsonl"))
-    return matches[-1] if matches else None
 
 
 # The record of captured sessions.
@@ -135,7 +115,7 @@ def capture_session(
         return None, "unchanged since last time"
     with session.path.open(encoding="utf-8", errors="replace") as f:
         lines = list(f)
-    turns = (capture.parse_codex if session.kind == "codex" else capture.parse_transcript)(lines)
+    turns = capture.parse_transcript(lines)
     if capture.is_zk_session(turns):
         why, saved = "zk's own session", None
     else:
@@ -143,10 +123,9 @@ def capture_session(
         keep, why = capture.worth_keeping(new)
         saved = None
         if keep and not dry_run:
-            source = "claude-code" if session.kind == "claude" else "codex"
             text = capture.render_capture(
                 new,
-                f"{source}:{session.session_id}",
+                f"claude-code:{session.session_id}",
                 now.isoformat(timespec="seconds"),
                 session.project,
             )
@@ -219,13 +198,11 @@ def start_process(vault_dir: Path) -> None:
 
 
 def from_hook(vault_dir: Path, event: dict, now: datetime | None = None) -> tuple[str | None, str]:
-    """Capture the session a Claude Code or Codex session-end hook reports."""
+    """Capture the session a Claude Code session-end hook reports."""
     if os.environ.get(INGESTING):
         return None, "zk's own session"
     sid = str(event.get("session_id") or "")
     path = Path(event["transcript_path"]) if event.get("transcript_path") else None
-    if path is None and sid:
-        path = find_codex(sid)
     if path is None or not path.is_file():
         return None, "no transcript for this session"
     session = describe(path, sid or None, event.get("cwd"))

@@ -323,12 +323,12 @@ machine.
 
 ## 21. Hooks capture, a background run processes, a daily task catches up (2026-11-03)
 
-Since M6 the parts existed (a capture hook, `--then`), but nothing installed them, Codex wasn't
-covered and nothing ran on Windows. Shurjo asked for hooks as their own milestone, and for the
+Since M6 the parts existed (a capture hook, `--then`), but nothing installed them and nothing ran
+on Windows. Shurjo asked for hooks as their own milestone, and for the
 resolver to run after every session rather than daily.
 
-- **Capture is the only thing a hook does.** Claude Code gives SessionEnd hooks about 1.5 seconds
-  and Codex at most 3, and importing the CLI took 2.6 seconds (numpy). So the hook is its own
+- **Capture is the only thing a hook does.** Claude Code gives SessionEnd hooks about 1.5 seconds,
+  and importing the CLI took 2.6 seconds (numpy). So the hook is its own
   module, `python -m zk.hook`, which imports in about 0.1 seconds and calls the venv's python
   directly instead of `uv run`, which would sync the environment first. Anything slow happens in a
   detached `zk process`.
@@ -349,6 +349,12 @@ resolver to run after every session rather than daily.
 - **The daily task is a safety net,** for apps where hooks don't fire and sessions that ended while
   the PC was asleep. It is created from XML so it can run at the next chance when the PC was off
   (`StartWhenAvailable`), which `schtasks /SC DAILY` alone can't set.
-- **The Codex rollout format isn't a stable interface,** by OpenAI's own docs. The parser reads
-  `response_item` messages, falls back to `event_msg` echoes, and skips anything it doesn't know,
-  so a format change makes captures shorter, not wrong. The Windows test checks it on real files.
+- **Claude Code only, for now** (Shurjo, 2026-11-09). Codex support was built and its parser
+  worked on real rollouts, but it was taken out to keep the first automatic system to one agent.
+  The record is keyed by agent (`claude:<session>`), so Codex can be added later without
+  re-capturing anything.
+- **The MCP server serves only the `initialize` handshake protocol.** The SDK's default stdio
+  loop lets the client's first request choose the protocol era for good. Claude Code 2.1.280
+  opens with a 2026-07-28 request and then falls back to `initialize`, which that loop refuses, so
+  the server never connected on Shurjo's PC. Serving only the handshake era turns the opening
+  request away and accepts the fallback; Claude Code 2.1.319 connects either way.

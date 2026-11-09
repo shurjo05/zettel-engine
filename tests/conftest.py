@@ -64,12 +64,11 @@ def no_model_downloads(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def isolated_homes(tmp_path_factory, monkeypatch):
-    """zk's data folder and the agents' config folders point at throwaway folders."""
+    """zk's data folder and Claude Code's config folder point at throwaway folders."""
     base = tmp_path_factory.mktemp("homes")
     for var, name in [
         ("ZK_DATA_DIR", "zk"),
         ("CLAUDE_CONFIG_DIR", "claude"),
-        ("CODEX_HOME", "codex"),
     ]:
         monkeypatch.setenv(var, str(base / name))
     return base

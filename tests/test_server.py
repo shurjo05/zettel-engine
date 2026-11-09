@@ -188,3 +188,56 @@ def test_suggest_links_lists_unlinked_similar_notes(vault, tmp_path, embedder):
     assert len(found) == 2 and found[0]["similarity"] >= found[1]["similarity"]
     plain = {t.name for t in tools(make(vault, tmp_path))}
     assert "suggest_links" not in plain  # needs semantic search
+
+
+def test_stdio_server_accepts_initialize_after_a_newer_protocol_probe(vault, tmp_path):
+    """Claude Code 2.1.280 opens with a 2026-07-28 request, then falls back to `initialize`.
+
+    The SDK's default loop locked the connection to the newer protocol and
+    refused the fallback, so the server never connected on Shurjo's PC.
+    """
+    import subprocess
+    import sys
+
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "zk", "serve", str(vault), "--db", str(tmp_path / "i.sqlite")],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+
+    def send(message, reply=True):
+        proc.stdin.write(json.dumps(message) + "\n")
+        proc.stdin.flush()
+        return json.loads(proc.stdout.readline()) if reply else None
+
+    try:
+        meta = {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientInfo": {"name": "probe", "version": "1"},
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }
+        probe = send(
+            {"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {"_meta": meta}}
+        )
+        assert "error" in probe
+        init = send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "probe", "version": "1"},
+                },
+            }
+        )
+        assert "result" in init, init
+        send({"jsonrpc": "2.0", "method": "notifications/initialized"}, reply=False)
+        tools = send({"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}})
+        assert "search_notes" in {t["name"] for t in tools["result"]["tools"]}
+    finally:
+        proc.kill()
+        proc.wait()

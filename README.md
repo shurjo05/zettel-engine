@@ -20,7 +20,7 @@ rebuildable index stored outside the vault.
 | M7 | Import the legacy notes: convert, dedup, repair links | done |
 | M8 | Held duplicates judged by a model, then merged or released | done |
 | M9 | Maintenance reports: link suggestions, orphans, map suggestions | done |
-| M10 | Hooks that run on their own: install the session hook, catch up on sessions it missed (desktop apps, Codex), schedule ingest and the duplicate resolver, tested on Windows | in progress |
+| M10 | Hooks that run on their own: install the session hook, catch up on sessions it missed, schedule ingest and the duplicate resolver, tested on Windows | in progress |
 | M11 | Context-efficiency and RAG evaluation | planned |
 
 ## Setup
@@ -155,7 +155,7 @@ Two ready-made commands go in `~/.claude/commands/` for Claude Code, or `~/.code
 Codex, so that `/zk-ingest` and `/zk-inbox` work in the apps too:
 
 - [docs/commands/zk-ingest.md](docs/commands/zk-ingest.md): saves what's worth keeping from the
-  current conversation. Use it where no session-end hook runs, such as Codex or the desktop apps.
+  current conversation. Use it where no session-end hook runs, such as Codex.
 - [docs/commands/zk-inbox.md](docs/commands/zk-inbox.md): turns the captures waiting in the inbox
   into notes.
 
@@ -192,19 +192,17 @@ see the change before making it.
 ```bat
 cd C:\path\to\zettel-engine
 claude mcp add zk --scope user -- uv --directory C:\path\to\zettel-engine run zk serve C:\path\to\vault --allow-writes
-uv run zk hooks install C:\path\to\vault --codex --dry-run
-uv run zk hooks install C:\path\to\vault --codex
+uv run zk hooks install C:\path\to\vault --dry-run
+uv run zk hooks install C:\path\to\vault
 uv run zk schedule install C:\path\to\vault --at 21:00
 uv run zk hooks status C:\path\to\vault
 ```
 
 - **`zk hooks install`** adds a SessionEnd hook to Claude Code's `%USERPROFILE%\.claude\settings.json`
-  (used by the CLI, the IDE extensions and the desktop app) and, with `--codex`, to
-  `%USERPROFILE%\.codex\hooks.json`. It only adds an entry, never changes one, does nothing when
-  zk's hook is already there, and backs the file up first. Codex runs a new hook only once you
-  trust it, with `/hooks` in the CLI or Settings > Hooks in the app. The hook runs
-  `python -m zk.hook`, which imports only what capturing needs, because agents give session-end
-  hooks one to three seconds.
+  (used by the CLI, the IDE extensions and the desktop app). It only adds an entry, never changes
+  one, does nothing when zk's hook is already there, and backs the file up first. The hook runs
+  `python -m zk.hook`, which imports only what capturing needs, because Claude Code gives
+  session-end hooks about a second and a half.
 - **After each captured session** the hook starts `zk process` in the background. It runs a
   headless `claude -p` with only the zk tools to ingest the inbox, then, if any note was held, a
   second one (with `--resolve-model`, default opus) to resolve the holds. A step with no work makes
@@ -213,8 +211,7 @@ uv run zk hooks status C:\path\to\vault
   captured. `--no-process` installs a hook that only captures.
 - **`zk capture --catch-up`** captures recent sessions no hook did: an app where hooks don't run,
   a crash, a session that ended while zk wasn't installed. It reads Claude Code transcripts in
-  `~/.claude/projects` and Codex rollouts in `~/.codex/sessions`, skips sessions used in the last
-  30 minutes, and keeps a record in the zk data folder (`sessions.json`) so nothing is captured
+  `~/.claude/projects`, skips sessions used in the last 30 minutes, and keeps a record in the zk data folder (`sessions.json`) so nothing is captured
   twice. A resumed session yields a capture of its new turns only. `--dry-run` lists what it would
   capture.
 - **`zk schedule install`** adds a daily Windows task, `zk catch-up`, that runs
@@ -224,7 +221,8 @@ uv run zk hooks status C:\path\to\vault
 Logs go to the zk data folder's `logs/`. The headless agents use the zk server registered on the
 first line, so both installs warn when it's missing or lacks `--allow-writes`, and
 `zk hooks status` says whether it's there. Sessions in the cloud (claude.ai/code) can't be
-captured, since their transcripts aren't on your machine.
+captured, since their transcripts aren't on your machine. Codex sessions aren't captured
+automatically yet; `/zk-ingest` works there.
 
 The older `zk capture --hook [--then COMMAND]` still works.
 

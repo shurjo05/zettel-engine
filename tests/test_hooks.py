@@ -39,16 +39,14 @@ def test_install_only_adds_and_backs_up(vault, isolated_homes, capsys):
     assert json.loads(settings.read_text()) == data
 
 
-def test_install_for_codex_and_status(vault, isolated_homes, capsys):
-    assert main(["hooks", "install", str(vault), "--codex", "--no-process"]) == 0
-    out = capsys.readouterr().out
-    assert "trust it" in out
-    codex = json.loads((isolated_homes / "codex" / "hooks.json").read_text())
-    entry = codex["hooks"]["SessionEnd"][0]["hooks"][0]
-    assert entry["timeout"] == 3 and not entry["command"].endswith("--process")
+def test_install_without_processing_and_status(vault, isolated_homes, capsys):
+    assert main(["hooks", "install", str(vault), "--no-process"]) == 0
+    data = json.loads((isolated_homes / "claude" / "settings.json").read_text())
+    entry = data["hooks"]["SessionEnd"][0]["hooks"][0]
+    assert entry["timeout"] == 10 and not entry["command"].endswith("--process")
     assert main(["hooks", "status", str(vault)]) == 0
     out = capsys.readouterr().out
-    assert "claude hook: installed" in out and "codex hook: installed" in out
+    assert "claude hook: installed" in out and "codex" not in out
 
 
 def test_install_refuses_a_settings_file_it_cannot_read(vault, isolated_homes):

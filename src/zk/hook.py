@@ -1,6 +1,6 @@
 """The session-end hook: `python -m zk.hook VAULT [--process]`.
 
-Claude Code and Codex run this when a session ends, with the event as JSON on
+Claude Code runs this when a session ends, with the event as JSON on
 stdin. It captures the session into the inbox and, with --process, starts
 `zk process` in the background to turn the inbox into notes. Agents give
 session-end hooks one to a few seconds, so this imports only what capturing

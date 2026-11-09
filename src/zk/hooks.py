@@ -1,7 +1,7 @@
-"""Install zk's session-end hook for Claude Code and Codex, and its scheduled catch-up.
+"""Install zk's session-end hook for Claude Code, and its scheduled catch-up.
 
 These write files that belong to the person, not to zk: Claude Code's
-settings.json, Codex's hooks.json and a Windows scheduled task. So installing
+settings.json and a Windows scheduled task. So installing
 only ever adds an entry. It never changes or removes one already there, it is a
 no-op when zk's hook is already installed, it backs the file up first, and
 `dry_run` shows the change without making it. `remove_schedule` removes only
@@ -20,15 +20,14 @@ from datetime import datetime
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from zk.sessions import claude_home, codex_home
+from zk.sessions import claude_home
 
 TASK_NAME = "zk catch-up"
-# Claude Code lets a hook set its own timeout; Codex caps session-end hooks at 3 seconds.
-TIMEOUTS = {"claude": 10, "codex": 3}
+HOOK_TIMEOUT = 10  # seconds; Claude Code lets a hook set its own
 
 
-def settings_path(agent: str) -> Path:
-    return claude_home() / "settings.json" if agent == "claude" else codex_home() / "hooks.json"
+def settings_path() -> Path:
+    return claude_home() / "settings.json"
 
 
 def python_exe(windowless: bool = False) -> str:
@@ -86,9 +85,9 @@ def _is_zk(command: str) -> bool:
     return "zk.hook" in command or ("zk capture" in command and "--hook" in command)
 
 
-def installed(agent: str) -> list[str]:
-    """The zk hook commands already in an agent's settings."""
-    data, _ = _load(settings_path(agent))
+def installed() -> list[str]:
+    """The zk hook commands already in Claude Code's user settings."""
+    data, _ = _load(settings_path())
     hooks = data.get("hooks")
     groups = hooks.get("SessionEnd") if isinstance(hooks, dict) else None
     groups = groups if isinstance(groups, list) else []
@@ -114,14 +113,13 @@ def _load(path: Path) -> tuple[dict, str]:
     return data, text
 
 
-def install(agent: str, vault_dir: Path, process: bool = True, dry_run: bool = False) -> dict:
-    """Add zk's SessionEnd hook to an agent's user settings, if no zk hook is there yet."""
-    path = settings_path(agent)
+def install(vault_dir: Path, process: bool = True, dry_run: bool = False) -> dict:
+    """Add zk's SessionEnd hook to Claude Code's user settings, if no zk hook is there yet."""
+    path = settings_path()
     data, before = _load(path)
-    existing = installed(agent)
+    existing = installed()
     if existing:
         return {
-            "agent": agent,
             "path": str(path),
             "action": "already installed",
             "commands": existing,
@@ -131,7 +129,7 @@ def install(agent: str, vault_dir: Path, process: bool = True, dry_run: bool = F
         raise ValueError(f"{path} has an unexpected 'hooks' shape; not changing it")
     command = hook_command(vault_dir, process)
     hooks["SessionEnd"].append(
-        {"hooks": [{"type": "command", "command": command, "timeout": TIMEOUTS[agent]}]}
+        {"hooks": [{"type": "command", "command": command, "timeout": HOOK_TIMEOUT}]}
     )
     after = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     diff = "".join(
@@ -140,7 +138,6 @@ def install(agent: str, vault_dir: Path, process: bool = True, dry_run: bool = F
         )
     )
     result = {
-        "agent": agent,
         "path": str(path),
         "action": "would add",
         "diff": diff,
