@@ -29,6 +29,7 @@ from zk.proposals import (
     InvalidProposal,
     Proposal,
     render,
+    slugify,
     verdict,
 )
 from zk.search import similar_notes, similar_to_vector
@@ -148,6 +149,7 @@ def ingest(
         if not (vault_dir / INBOX / capture).is_file():
             raise FileNotFoundError(f"no capture named {capture!r} in the inbox")
 
+    _link_drafts(vault_dir, drafts)
     rendered, problems, taken = [], [], set()
     for i, draft in enumerate(drafts, 1):
         questions = [" ".join(q.split()) for q in draft.questions if q.strip()]
@@ -239,6 +241,35 @@ def ingest(
     return result
 
 
+def _link_drafts(vault_dir: Path, drafts: list[Proposal]) -> None:
+    """Point links between notes of the same run at the names those notes will get.
+
+    An agent links two new notes before either has a file name, so it guesses
+    the name from the title, and a near miss ("...-over-inheritance" for
+    "...-over-inheritance-to-enforce-contracts") left a broken link on the
+    first real run. A link that names no existing note is matched to a draft
+    of this run by title, by name, or by one name starting with the other,
+    when exactly one draft fits.
+    """
+    names = {slugify(d.title): d for d in drafts if d.title}
+    for draft in drafts:
+        own = slugify(draft.title) if draft.title else None
+        fixed = {}
+        for target, why in draft.links.items():
+            key = slugify(target.strip("[]").removesuffix(".md"))
+            if (vault_dir / NOTES_DIR / f"{target}.md").is_file():
+                fixed[target] = why
+                continue
+            if key in names:  # a title or a name of this run: link by the file name
+                fixed[key] = why
+                continue
+            fits = [
+                n for n in names if n != own and key and (n.startswith(key) or key.startswith(n))
+            ]
+            fixed[fits[0] if len(fits) == 1 else target] = why
+        draft.links = fixed
+
+
 def _commit(vault_dir: Path, paths: list[str], message: str) -> dict:
     try:
         return {"commit": vault.git_commit(vault_dir, paths, message)}
@@ -276,4 +307,6 @@ def discard(vault_dir: Path, name: str, kind: str = "held") -> str:
         raise FileNotFoundError(f"no {kind} named {name!r}")
     dst = vault.unique_path(vault_dir, f"{folder}/{name}")
     vault.move_new(vault_dir, src, dst)
+    what = "held note" if kind == "held" else "capture"
+    _commit(vault_dir, [src, dst], f"zk: set aside {what} {name}")  # one commit, like the rest
     return dst
