@@ -15,7 +15,10 @@ Read README.md first. Then:
   captures (through `vault.py`) and its record in the zk data folder. `hooks.py` writes the
   person's agent settings only by adding an entry after a backup, never changing or removing
   one. `process.py` runs headless agents limited to the zk tools. `hook.py` must stay light
-  (no numpy): session-end hooks get one to three seconds. `checks.py` reads the vault and the index and writes only the score
+  (no numpy): session-end hooks get one to three seconds. `context.py` and `answer.py` only read
+  the index. `calibrate.py` reads the index and the vault's git log and writes only its label
+  files in `eval/calibration/`, through `vault.py`. `agent.py` runs a one-shot headless Claude
+  with the `[zk]` marker; anything sent through it must have a row in `docs/data-flow.md`. `checks.py` reads the vault and the index and writes only the score
   history file next to the index.
 - Retrieval changes must be judged with `zk eval`; report before and after numbers in the PR.
 - Tests must use copies of `tests/fixtures/vault` (the `vault` fixture), never a real vault.

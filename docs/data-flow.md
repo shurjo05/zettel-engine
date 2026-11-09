@@ -13,6 +13,9 @@ sends vault content somewhere new.
 | Session-end hook, `zk capture --catch-up` (M10) | Claude Code transcripts in `~/.claude/projects`, from every project on this machine | New captures in `inbox/`, secrets redacted; `sessions.json` (session ids and capture names) in the zk data folder | No |
 | `zk process`, after each session and in the daily `zk catch-up` task (M10) | Inbox captures and held notes, through the zk tools | What ingest and resolve write (rows above); a log in the zk data folder's `logs/` | Yes, without you in the loop: a headless `claude -p` sends each capture, and then each held pair, to Anthropic. A step with no work makes no call |
 | `zk hooks install`, `zk schedule install` (M10) | Claude Code's `settings.json` | One added hook entry and a backup next to it; a Windows scheduled task | No |
+| `zk eval --context` (M11) | The index | Nothing | No |
+| `zk ask`, `zk eval --answers` (M11, opt-in) | The index | Nothing | Yes: each question and the text of its top 5 notes (up to about 2,400 characters each) go to Anthropic through a headless `claude -p` with your login |
+| `zk calibrate` (M11, opt-in) | The index and the vault's git log | Label files in `eval/calibration/` (note names, content hashes, labels, one-line reasons; no note text); one git commit | Yes: each sampled pair's titles and text (up to about 1,500 characters each) go to Anthropic through `claude -p`. `--no-judge` sends nothing |
 | `zk import` (M7) | The legacy vault folder, read only | New notes in `notes/` and `inbox/held/`, an import report in `inbox/reports/`, and `eval/legacy-queries.yaml` if `--queries` is given; one git commit. `--dry-run` writes only to a temporary folder it deletes | No: conversion, dedup (local embeddings) and link repair all run on this machine |
 | `zk serve --allow-writes`: resolving held notes (M8) | Held notes and the notes closest to them | Changes the note a held duplicate merges into, retargets links in other notes and labels in `eval/`, moves held notes to `notes/` or `inbox/merged/`; one git commit per decision | Yes: each held note and its closest note go in full to the model provider of the agent running `/zk-resolve`, which writes the merged note. A scheduled run sends them without you in the loop |
 | `zk serve` (MCP, M3) | The vault (to refresh the index) and the index | SQLite index outside the vault | Yes, the parts an agent asks for: see below |
@@ -33,7 +36,7 @@ kept out of the served vault, for example with `--exclude`.
 
 Planned features and their expected flow (to be confirmed when built):
 
-- Optional API features (`zk ask`, API embeddings): opt-in only, documented here before use.
+- API embeddings: opt-in only, documented here before use.
 
 The repository itself contains no vault content; tests use the synthetic vault in
 `tests/fixtures/vault`.

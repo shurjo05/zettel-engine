@@ -80,3 +80,17 @@ def no_claude_calls(monkeypatch):
     from zk import hooks
 
     monkeypatch.setattr(hooks, "server_ready", lambda: (None, "not checked in tests"))
+
+
+@pytest.fixture(autouse=True)
+def no_real_claude(monkeypatch):
+    """Tests never start a real headless Claude; a test that needs answers sets its own."""
+    from zk import cli
+
+    def refuse(model=None):
+        def ask(prompt):
+            raise AssertionError("a test tried to call Claude")
+
+        return ask
+
+    monkeypatch.setattr(cli, "make_ask", refuse)

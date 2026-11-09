@@ -9,7 +9,6 @@ the server is started with allow_writes (`zk serve --allow-writes`).
 
 from __future__ import annotations
 
-import json
 import sqlite3
 import threading
 from collections.abc import Callable, Iterable
@@ -24,6 +23,7 @@ from zk import ingest, lookup, maintain, resolve
 from zk.checks import history_path
 from zk.embed import Embedder, update_embeddings
 from zk.index import build_index, open_db
+from zk.lookup import compact as _compact
 from zk.proposals import InvalidProposal, Proposal
 from zk.search import DEFAULT_MODE, MODES, search
 from zk.vault import VaultWriteError
@@ -57,11 +57,6 @@ WRITES = ToolAnnotations(
     read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False
 )
 _EXPECTED = (LookupError, ValueError, FileNotFoundError, InvalidProposal, VaultWriteError)
-
-
-def _compact(value: object) -> str:
-    """JSON without indentation: whatever a tool returns is paid for in context tokens."""
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 def create_server(

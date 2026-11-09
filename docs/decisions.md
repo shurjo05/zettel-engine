@@ -358,3 +358,28 @@ resolver to run after every session rather than daily.
   opens with a 2026-07-28 request and then falls back to `initialize`, which that loop refuses, so
   the server never connected on Shurjo's PC. Serving only the handshake era turns the opening
   request away and accepts the fallback; Claude Code 2.1.319 connects either way.
+
+## 22. Measure context, citations and thresholds; judge with headless Claude (2026-11-09)
+
+The plan's last milestone asked for tokens per task, latency, citation accuracy and an optional
+`zk ask`. On 2026-11-03 Shurjo asked how the similarity thresholds stay right as the vault grows.
+
+- **Context is measured on the tools' real output.** `zk eval --context` replays `search_notes`
+  then `get_note` for each labelled question and counts the tokens of the exact JSON the MCP
+  server returns. It compares that with opening the top 5 in full (naive RAG) and with the whole
+  vault. That tests the central claim of the design (summaries first, bodies on demand) rather
+  than assuming it.
+- **Answers are checked by code, through citations.** `zk ask` requires `[[name]]` citations or
+  "NOT IN NOTES". That makes three things checkable without a second model: citing a relevant
+  note, citing only notes that were given, and abstaining when retrieval missed. Judging answer
+  prose with another model would add cost and its own noise.
+- **Headless Claude, not an API client.** Answering and judging run `claude -p` once, with no
+  tools, in an empty folder, with the person's own login. This is the same route as `zk process`,
+  with no key to manage and no new dependency. The `[zk]` marker and `ZK_INGESTING=1` keep these
+  runs out of the captures.
+- **Thresholds are re-checked, not re-tuned.** `zk calibrate` judges pairs in a 0.03 band on
+  each side of each cut and compares precision with the hand measurement. It only warns: a
+  threshold change moves every later hold and suggestion, so it stays a reviewed PR. Labels are
+  saved with content hashes and reused, so the labelled set grows and each run only pays for new
+  pairs. The resolver's released/merged ratio from git history is a free, continuous measure of
+  false duplicate holds.

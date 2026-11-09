@@ -20,8 +20,8 @@ rebuildable index stored outside the vault.
 | M7 | Import the legacy notes: convert, dedup, repair links | done |
 | M8 | Held duplicates judged by a model, then merged or released | done |
 | M9 | Maintenance reports: link suggestions, orphans, map suggestions | done |
-| M10 | Hooks that run on their own: install the session hook, catch up on sessions it missed, schedule ingest and the duplicate resolver, tested on Windows | in progress |
-| M11 | Context-efficiency and RAG evaluation | planned |
+| M10 | Hooks that run on their own: install the session hook, catch up on sessions it missed, schedule ingest and the duplicate resolver, tested on Windows (Claude Code only for now) | done |
+| M11 | Context efficiency, answer quality with citations (`zk ask`), threshold re-checks (`zk calibrate`) | in progress |
 
 ## Setup
 
@@ -286,7 +286,35 @@ relevant note was not in the top 10. Keep query sets about private vaults out of
 Without a query file it scores the test questions ingest saved in the vault's `eval/` folder, by
 kind (`generated`, and the `holdout` sample).
 
-Apart from `capture` and the ingest tools, `zk` only reads the vault. It skips hidden folders (`.obsidian`, `.git`) plus `inbox/**` and
+Three more measurements answer "is this worth it, and is it still tuned right?":
+
+```bash
+uv run zk eval path/to/vault --context            # tokens per question: zk tools vs naive RAG vs whole vault
+uv run zk ask path/to/vault "why fuse by rank?"   # an answer from the notes, citing them as [[name]]
+uv run zk eval path/to/vault --answers --limit 20 # citation accuracy, grounding, abstention
+uv run zk calibrate path/to/vault                 # re-check the similarity thresholds
+```
+
+- **`--context`** replays what an agent does through the MCP tools for each question
+  (`search_notes`, then `get_note` on the first relevant hit) and counts the tokens of the JSON
+  they return, next to two baselines: opening the top 5 notes in full, and the whole vault. Local,
+  no model.
+- **`zk ask`** gives the top 5 notes to a headless `claude -p` (your own login, no tools) and asks
+  for an answer that cites each note it uses, or "NOT IN NOTES". **`--answers`** runs it over the
+  labelled questions and scores the answers by their citations: does it cite a relevant note, does
+  it cite only notes it was given, and does it abstain when retrieval missed.
+- **`zk calibrate`** samples note pairs in a 0.03 band just below and just above each cut
+  (duplicate 0.85, link 0.78, orphan parent 0.70), has Claude label each pair same, related or
+  unrelated, and reports precision per band against the precision measured by hand. It warns when
+  a cut has drifted and never changes one. Labels are saved in the vault's `eval/calibration/` with
+  both notes' content hashes, so the next run only judges new pairs. `--no-judge` reports from
+  saved labels only. It also reads the vault's git history for the hold rate and the share of
+  holds the resolver released as "only related", which counts false holds directly.
+
+`zk ask`, `--answers` and `zk calibrate` send the question and the notes they use to Anthropic (see
+[docs/data-flow.md](docs/data-flow.md)).
+
+Apart from `capture`, `calibrate` (its label files) and the ingest tools, `zk` only reads the vault. It skips hidden folders (`.obsidian`, `.git`) plus `inbox/**` and
 `templates/**`; add more with `--exclude GLOB` (repeatable, vault-relative, `*` also matches `/`).
 
 The index is a single SQLite file outside the vault: `%LOCALAPPDATA%\zk\` on Windows,
@@ -332,6 +360,10 @@ src/zk/search.py  keyword (BM25), semantic (cosine) and hybrid (RRF) search with
 src/zk/embed.py   local embedding model and the vector cache in the index
 src/zk/lookup.py  one note, or its neighbours, by id, file name, path or title
 src/zk/evaluate.py  retrieval metrics over a labelled query set
+src/zk/context.py   context tokens per question: zk tools vs naive RAG vs whole vault
+src/zk/answer.py    answer from the notes with citations, and score the citations
+src/zk/calibrate.py  re-check similarity thresholds on model-judged pairs
+src/zk/agent.py     one-shot headless Claude, for answering and judging
 src/zk/server.py  MCP server: the same functions as read-only tools
 src/zk/capture.py  session transcripts and text into inbox captures (pure)
 src/zk/vault.py   the only writer of vault files: create or move, never overwrite, atomic
@@ -339,6 +371,9 @@ src/zk/proposals.py  render a note draft in the schema and validate it (pure)
 src/zk/ingest.py  one ingest run: duplicate check, write, questions, commit, writing through vault.py
 src/zk/checks.py  warnings after each ingest: score drops beyond noise, new-note health
 src/zk/migrate.py  import a legacy vault: convert, hold duplicates, repair links, report
+src/zk/resolve.py  judge and merge held duplicates
+src/zk/maintain.py  link, orphan and map suggestions
+src/zk/sessions.py, hook.py, process.py, hooks.py  capture sessions, process the inbox, install hooks
 src/zk/cli.py     the `zk` command
 eval/             query sets for the fixture vault
 tests/            pytest suite and a small synthetic fixture vault
