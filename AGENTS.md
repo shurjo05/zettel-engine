@@ -10,12 +10,18 @@ Read README.md first. Then:
   `--allow-writes` is given. Only `vault.py` may write vault
   files. It creates or moves files and never deletes; the one write that changes a file,
   `vault.replace`, needs the content hash the caller read. `ingest.py`, `migrate.py` and
-  `resolve.py` write only through it, and only `resolve.merge_held` uses `replace`.
+  `resolve.py` write only through it, and only `resolve.merge_held` and `maps.update` (on maps zk generated and nobody has
+  edited) use `replace`. `maps.py` writes only `maps/` and never deletes: it retires a map by moving it.
   `maintain.py` only reads the index. `sessions.py` reads agent transcripts and writes only
   captures (through `vault.py`) and its record in the zk data folder. `hooks.py` writes the
   person's agent settings only by adding an entry after a backup, never changing or removing
   one. `process.py` runs headless agents limited to the zk tools. `hook.py` must stay light
-  (no numpy): session-end hooks get one to three seconds. `context.py` and `answer.py` only read
+  (no numpy): session-end hooks get one to three seconds. `recall.py` and `learn.py`, which hooks import, stay light too; `recall.py` only reads
+  the index (opened read-only) and writes only per-session records in the zk data folder. `learn.py`
+  reads the person's project folders and writes only inbox captures (through `vault.py`) and its
+  record in the zk data folder. `review.py` reads the index, vault and git log and writes only its
+  report in `inbox/reports/`, through `vault.py`. `hooks.py` may also add `~/.claude/rules/zk.md`,
+  never overwriting it. `context.py` and `answer.py` only read
   the index. `calibrate.py` reads the index and the vault's git log and writes only its label
   files in `eval/calibration/`, through `vault.py`. `agent.py` runs a one-shot headless Claude
   with the `[zk]` marker; anything sent through it must have a row in `docs/data-flow.md`. `checks.py` reads the vault and the index and writes only the score

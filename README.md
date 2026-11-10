@@ -21,7 +21,8 @@ rebuildable index stored outside the vault.
 | M8 | Held duplicates judged by a model, then merged or released | done |
 | M9 | Maintenance reports: link suggestions, orphans, map suggestions | done |
 | M10 | Hooks that run on their own: install the session hook, catch up on sessions it missed, schedule ingest and the duplicate resolver, tested on Windows (Claude Code only for now) | done |
-| M11 | Context efficiency, answer quality with citations (`zk ask`), threshold re-checks (`zk calibrate`) | in progress |
+| M11 | Context efficiency, answer quality with citations (`zk ask`), threshold re-checks (`zk calibrate`) | done |
+| M12 | Notes reach Claude without being asked: map notes, a session brief, a search nudge, notes for failed commands, reading past projects (`zk learn`), a weekly review | in progress |
 
 ## Setup
 
@@ -191,18 +192,20 @@ see the change before making it.
 
 ```bat
 cd C:\path\to\zettel-engine
-claude mcp add zk --scope user -- uv --directory C:\path\to\zettel-engine run zk serve C:\path\to\vault --allow-writes
+claude mcp add zk --scope user -- uv --directory C:\path\to\zettel-engine run zk serve C:\path\to\vault
 uv run zk hooks install C:\path\to\vault --dry-run
 uv run zk hooks install C:\path\to\vault
 uv run zk schedule install C:\path\to\vault --at 21:00
 uv run zk hooks status C:\path\to\vault
 ```
 
-- **`zk hooks install`** adds a SessionEnd hook to Claude Code's `%USERPROFILE%\.claude\settings.json`
-  (used by the CLI, the IDE extensions and the desktop app). It only adds an entry, never changes
-  one, does nothing when zk's hook is already there, and backs the file up first. The hook runs
-  `python -m zk.hook`, which imports only what capturing needs, because Claude Code gives
-  session-end hooks about a second and a half.
+- **`zk hooks install`** adds zk's hooks to Claude Code's `%USERPROFILE%\.claude\settings.json`
+  (used by the CLI, the IDE extensions and the desktop app): SessionEnd captures the session, and
+  three more bring notes in (see [Notes without asking](#notes-without-asking)). It only adds
+  entries, one for each event that has no zk hook yet, never changes one, and backs the file up
+  first. `--no-recall` installs only the capture. Every hook runs `python -m zk.hook`, which
+  imports only what its event needs (never numpy), because Claude Code gives session-end hooks
+  about a second and a half and the others run often.
 - **After each captured session** the hook starts `zk process` in the background. It runs a
   headless `claude -p` with only the zk tools to ingest the inbox, then, if any note was held, a
   second one (with `--resolve-model`, default opus) to resolve the holds. A step with no work makes
@@ -214,17 +217,62 @@ uv run zk hooks status C:\path\to\vault
   `~/.claude/projects`, skips sessions used in the last 30 minutes, and keeps a record in the zk data folder (`sessions.json`) so nothing is captured
   twice. A resumed session yields a capture of its new turns only. `--dry-run` lists what it would
   capture.
+- **Captures are ingested a few at a time** (three, or about 120,000 characters), oldest first,
+  so a backlog never fills one agent's context. A run that changed the vault ends by bringing the
+  map notes up to date.
 - **`zk schedule install`** adds a daily Windows task, `zk catch-up`, that runs
-  `zk process --catch-up`. If the PC was off at that time, it runs at the next chance.
-  `zk schedule status` and `zk schedule remove` go with it. Elsewhere it prints a cron line.
+  `zk process --catch-up`, and a weekly one, `zk review` (Sunday 20:00 by default; `--review-day`,
+  `--review-at`, `--review-day never`). If the PC was off at that time, a task runs at the next
+  chance. `zk schedule status` and `zk schedule remove` go with them. Elsewhere it prints cron lines.
 
-Logs go to the zk data folder's `logs/`. The headless agents use the zk server registered on the
-first line, so both installs warn when it's missing or lacks `--allow-writes`, and
-`zk hooks status` says whether it's there. Sessions in the cloud (claude.ai/code) can't be
+Logs go to the zk data folder's `logs/`. The headless agents bring their own write-enabled zk
+server (`--mcp-config`, and only that server), so the one registered for everyday sessions on the
+first line stays read-only: sessions don't load the write tools or their instructions, and can't
+write notes. Both installs warn when it's missing or registered with `--allow-writes`, and
+`zk hooks status` says which. Sessions in the cloud (claude.ai/code) can't be
 captured, since their transcripts aren't on your machine. Codex sessions aren't captured
 automatically yet; `/zk-ingest` works there.
 
 The older `zk capture --hook [--then COMMAND]` still works.
+
+### Notes without asking
+
+Until M12, notes reached Claude only when it chose to search. Now the vault shows up on its own,
+cheaply, at a few points, and Claude opens more only when it needs it:
+
+1. **Map notes**, `zk maps VAULT`. A map note lists the notes on one topic or one project, a line
+   each. Topic maps come from the clusters `zk suggest` finds; project maps from notes' `project:`
+   sources. They live in `maps/`, are rewritten after each `zk process` run that changed the
+   vault, and keep their name while a topic keeps half its notes. A map edited by hand is left
+   alone from then on, and a map whose topic is gone moves to `maps/retired/` (never deleted).
+   Search leaves maps out unless asked (`type: map`). Patterns and decisions from one project stay
+   in that project's map, and join a topic map once they hold for two projects.
+2. **The session brief** (SessionStart). Each session is told how many notes there are, the map
+   names (capped, so it stays small as the vault grows) and, in a project's repository, that
+   project's notes. `zk brief VAULT --cwd FOLDER` prints it and its size. Target: under 1,000
+   tokens.
+3. **A nudge** (PreToolUse on Grep and Glob): one line, the first time a session searches files,
+   saying the vault may already cover it.
+4. **Notes for a failed command** (PostToolUseFailure on Bash or PowerShell): keyword search on
+   the error lines, and up to two notes only when most of their words match. Each note is shown
+   once per session; nothing is added otherwise.
+5. **When to search**: `zk hooks install` adds `~/.claude/rules/zk.md`, which Claude Code loads in
+   every project. Nothing is written into your repositories. It's a new file, never overwritten;
+   edit it as you like.
+6. **Past projects**, `zk learn VAULT FOLDER...`. A free first pass, with no model, reads the
+   folder tree, README, manifests, recent commit subjects and the class and function names in each
+   source file, skipping dependencies, build output and likely secret files, and saves it as an
+   inbox capture. The next ingest turns it into notes on how the project is built, so reading a
+   project costs no extra model call. File hashes are remembered, so a later run reads only what
+   changed. A session that starts in a repository zk hasn't read starts this in the background.
+   `--dry-run` prints the capture; `--skip` keeps a project out for good.
+7. **The weekly review**, `zk review VAULT`: health, inbox, retrieval on the test questions, map
+   changes pending, hold drift, the brief's size, and the projects read, as one page in
+   `inbox/reports/`. No model.
+
+Notes recorded from a project's sessions or `zk learn` get a `project:<name>` source, and
+`search_notes` takes `project` to keep to one. Per-prompt search was left out: it costs tokens on
+every message, and the cheaper pieces above come first.
 
 ### Importing a legacy vault
 
@@ -373,6 +421,10 @@ src/zk/checks.py  warnings after each ingest: score drops beyond noise, new-note
 src/zk/migrate.py  import a legacy vault: convert, hold duplicates, repair links, report
 src/zk/resolve.py  judge and merge held duplicates
 src/zk/maintain.py  link, orphan and map suggestions
+src/zk/maps.py    map notes for topics and projects, kept up to date
+src/zk/recall.py  the session brief, the search nudge and notes for a failed command (light)
+src/zk/learn.py   read a project's structure into a capture, with no model
+src/zk/review.py  the weekly vault health review
 src/zk/sessions.py, hook.py, process.py, hooks.py  capture sessions, process the inbox, install hooks
 src/zk/cli.py     the `zk` command
 eval/             query sets for the fixture vault
