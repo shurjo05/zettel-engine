@@ -31,6 +31,7 @@ BRIEF_CHARS = 4000
 MAX_TOPICS = 15
 MAX_PROJECTS = 20
 MAX_PROJECT_ENTRIES = 12
+ENTRY_CHARS = 100  # a project note in the brief: its link, title and the start of its summary
 ERROR_HITS = 2
 MAX_ERROR_WORDS = 12
 STATE_DAYS = 7  # per-session records older than this are cleared at session start
@@ -122,8 +123,18 @@ def _notes_section(body: str) -> list[str]:
     return [line for line in rest.splitlines() if line.startswith("- [[")]
 
 
-def brief(conn: sqlite3.Connection, cwd: str | Path | None = None) -> str:
-    """What every session is told about the vault: its maps, and this project's notes."""
+def _short(entry: str) -> str:
+    return entry if len(entry) <= ENTRY_CHARS else entry[: ENTRY_CHARS - 3].rstrip() + "..."
+
+
+def brief(
+    conn: sqlite3.Connection, cwd: str | Path | None = None, project: str | None = None
+) -> str:
+    """What every session is told about the vault: its maps, and this project's notes.
+
+    The project is the one `cwd` is in, unless `project` names one (the review uses that
+    to measure the largest brief).
+    """
     count = conn.execute("SELECT count(*) FROM notes WHERE type IS NOT 'map'").fetchone()[0]
     if not count:
         return ""
@@ -131,7 +142,7 @@ def brief(conn: sqlite3.Connection, cwd: str | Path | None = None) -> str:
         "SELECT path, body, frontmatter FROM notes WHERE type = 'map' ORDER BY path"
     ).fetchall()
     topics, projects, here = [], [], None
-    current = project_of(cwd)
+    current = project or project_of(cwd)
     best = 0  # 2: this folder's own name; 1: a name that is the same project
     for m in maps:
         front = json.loads(m["frontmatter"] or "{}")
@@ -167,7 +178,7 @@ def brief(conn: sqlite3.Connection, cwd: str | Path | None = None) -> str:
         name, project, body = here
         entries = _notes_section(body)
         lines.append(f"This folder is the project {project}; its map {name} lists:")
-        lines += entries[:MAX_PROJECT_ENTRIES]
+        lines += [_short(e) for e in entries[:MAX_PROJECT_ENTRIES]]
         if len(entries) > MAX_PROJECT_ENTRIES:
             lines.append(f"(and {len(entries) - MAX_PROJECT_ENTRIES} more in {name})")
     text = "\n".join(lines)

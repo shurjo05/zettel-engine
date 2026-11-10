@@ -428,6 +428,10 @@ memento-vault, superbrain, graphify, everything-claude-code and ruflo.
   `chat` and `chat-app` would share a map; for one person's projects that's rare, and visible.
 - **Topic labels only from tags most notes carry** (two thirds), else the most central note's
   title. A cluster of five C# notes, three on xUnit, was labelled "testing" though two weren't.
+- **Project notes in the brief are cut to 100 characters each.** In a project's folder the brief
+  lists up to 12 of its notes; at full length that took a 10-note project from about 160 to about
+  700 tokens. The title and the start of the summary are enough to decide whether to open one.
+  The weekly review now reports the largest brief any project's folder gets, not just the plain one.
 - **Push only where it's cheap and likely to help.** A session-start brief (target under 1,000
   tokens), a one-line nudge the first time a session greps or globs (graphify's idea), and notes
   for a failed shell command only when most of their words match the error, once per session.

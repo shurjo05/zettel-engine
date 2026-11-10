@@ -138,6 +138,9 @@ def test_the_brief_names_maps_and_lists_the_current_project(mapped, tmp_path):
     assert "Topic maps: map-retrieval-fusion (retrieval, fusion; 5)" in text
     assert "Project maps: project-robot-arm (2)" in text
     assert "This folder is the project robot-arm" in text and "- [[robot-camera]]" in text
+    entries = [line for line in text.splitlines() if line.startswith("- [[")]
+    assert entries and all(len(line) <= recall.ENTRY_CHARS for line in entries)
+    assert recall.brief(conn, project="robot-arm") == text
     elsewhere = recall.brief(conn, tmp_path)
     assert "This folder" not in elsewhere and len(elsewhere) < recall.BRIEF_CHARS
 
@@ -354,4 +357,4 @@ def test_weekly_review_task_and_report(vault, embedder, tmp_path):
     result = review.run(vault, conn, embedder)
     assert result["file"].startswith("inbox/reports/review-")
     assert "too few to tell a retrieval drop from noise" in result["text"]
-    assert "Session brief: about" in result["text"]
+    assert "Session brief: about" in result["text"] and "in a project's folder" in result["text"]

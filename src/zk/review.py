@@ -17,6 +17,7 @@ commit, and changes nothing else.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import subprocess
 from datetime import datetime
@@ -38,6 +39,13 @@ def gather(vault_dir: Path, conn: sqlite3.Connection, embedder: Embedder) -> dic
     scores = run_eval(conn, queries, mode="hybrid", embedder=embedder).summary() if queries else {}
     pending = maps.update(vault_dir, conn, embedder, dry_run=True)
     brief = recall.brief(conn)
+    projects = [
+        json.loads(f or "{}").get("project")
+        for (f,) in conn.execute("SELECT frontmatter FROM notes WHERE type = 'map'")
+    ]
+    largest = max(
+        (checks.estimate_tokens(recall.brief(conn, project=p)) for p in projects if p), default=0
+    )
     record = learn.load_record()
     return {
         "notes": health.notes - health.by_type.get("map", 0),
@@ -55,6 +63,7 @@ def gather(vault_dir: Path, conn: sqlite3.Connection, embedder: Embedder) -> dic
         "maps_edited": len(pending["edited"]),
         "drift": calibrate.drift(vault_dir),
         "brief_tokens": checks.estimate_tokens(brief),
+        "brief_tokens_in_project": max(largest, checks.estimate_tokens(brief)),
         "projects_learned": sorted(r["project"] for r in record["repos"].values()),
         "projects_skipped": len(record["skip"]),
     }
@@ -83,8 +92,11 @@ def advice(r: dict) -> list[str]:
             f"The resolver kept {false:.0%} of held notes as separate notes: the duplicate cut may "
             "be too loose; zk calibrate checks it."
         )
-    if r["brief_tokens"] > 1000:
-        out.append(f"The session brief is {r['brief_tokens']} tokens, over the 1,000 budget.")
+    if r["brief_tokens_in_project"] > 1000:
+        out.append(
+            f"The session brief reaches {r['brief_tokens_in_project']} tokens in a project's "
+            "folder, over the 1,000 budget."
+        )
     return out
 
 
@@ -115,7 +127,8 @@ def render(r: dict, now: datetime) -> str:
         f"- Holds: rate {num(d.get('hold_rate'), '{:.0%}')}, false holds "
         f"{num(d.get('false_hold_share'), '{:.0%}')} "
         f"({d.get('resolved_merged', 0)} merged, {d.get('resolved_released', 0)} released)",
-        f"- Session brief: about {r['brief_tokens']} tokens",
+        f"- Session brief: about {r['brief_tokens']} tokens, up to "
+        f"{r['brief_tokens_in_project']} in a project's folder",
         f"- Projects read by zk learn: {', '.join(r['projects_learned']) or 'none'}"
         + (f" ({r['projects_skipped']} kept out)" if r["projects_skipped"] else ""),
         "",
