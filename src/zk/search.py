@@ -11,9 +11,9 @@ import sqlite3
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
-import numpy as np
-
 if TYPE_CHECKING:
+    import numpy as np
+
     from zk.embed import Embedder
 
 # bm25() weights for notes_fts columns, in table order:
@@ -70,11 +70,25 @@ def fts_query(text: str) -> str | None:
     return " OR ".join(f'"{w}"' for w in unique)
 
 
-def _filters(type: str | None, tag: str | None) -> tuple[str, list]:
+def project_slug(name: str) -> str:
+    """A project's name as notes record it in `sources` (project:<slug>): lower case, dashes."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def _filters(type: str | None, tag: str | None, project: str | None = None) -> tuple[str, list]:
     sql, params = "", []
     if type:
         sql += " AND n.type = ?"
         params.append(type.lower())
+    else:
+        sql += " AND n.type IS NOT 'map'"  # map notes list other notes; open them by name
+    if project:
+        sql += (
+            " AND EXISTS (SELECT 1 FROM json_each(n.sources) "
+            "WHERE lower(value) = ? OR lower(value) LIKE ?)"
+        )
+        slug = project_slug(project)
+        params += [f"project:{slug}", f"project:{slug}:%"]
     if tag:
         sql += " AND EXISTS (SELECT 1 FROM json_each(n.tags) WHERE lower(value) = ?)"
         params.append(tag.lower())
@@ -89,17 +103,18 @@ def search(
     tag: str | None = None,
     mode: str = "keyword",
     embedder: Embedder | None = None,
+    project: str | None = None,
 ) -> list[Hit]:
     """Return the top `k` notes for `query`, best first."""
     if mode in ("semantic", "hybrid"):
         if embedder is None:
             raise ValueError(f"{mode} search needs an embedder")
         if mode == "hybrid":
-            return hybrid_search(conn, embedder, query, k=k, type=type, tag=tag)
-        return semantic_search(conn, embedder, query, k=k, type=type, tag=tag)
+            return hybrid_search(conn, embedder, query, k=k, type=type, tag=tag, project=project)
+        return semantic_search(conn, embedder, query, k=k, type=type, tag=tag, project=project)
     if mode != "keyword":
         raise ValueError(f"unknown search mode {mode!r}; expected one of {', '.join(MODES)}")
-    return keyword_search(conn, query, k=k, type=type, tag=tag)
+    return keyword_search(conn, query, k=k, type=type, tag=tag, project=project)
 
 
 def keyword_search(
@@ -108,6 +123,7 @@ def keyword_search(
     k: int = 5,
     type: str | None = None,
     tag: str | None = None,
+    project: str | None = None,
 ) -> list[Hit]:
     """BM25 over the full-text index, with title and alias matches weighted up."""
     match = fts_query(query)
@@ -123,7 +139,7 @@ def keyword_search(
         JOIN notes n ON n.rowid = notes_fts.rowid
         WHERE notes_fts MATCH ?
     """
-    where, extra = _filters(type, tag)
+    where, extra = _filters(type, tag, project)
     sql += where + " ORDER BY score DESC, n.path LIMIT ?"
     params: list = [match, *extra, k]
 
@@ -149,6 +165,7 @@ def semantic_search(
     k: int = 5,
     type: str | None = None,
     tag: str | None = None,
+    project: str | None = None,
 ) -> list[Hit]:
     """Cosine similarity between the query's vector and every note's vector.
 
@@ -157,7 +174,7 @@ def semantic_search(
     """
     if not query.strip() or k <= 0:
         return []
-    return _nearest(conn, embedder, embedder.embed_query(query), k, type, tag)
+    return _nearest(conn, embedder, embedder.embed_query(query), k, type, tag, project)
 
 
 def similar_notes(conn: sqlite3.Connection, embedder: Embedder, text: str, k: int = 5) -> list[Hit]:
@@ -181,8 +198,11 @@ def _nearest(
     k: int,
     type: str | None,
     tag: str | None,
+    project: str | None = None,
 ) -> list[Hit]:
-    where, params = _filters(type, tag)
+    import numpy as np
+
+    where, params = _filters(type, tag, project)
     rows = conn.execute(
         "SELECT n.path, n.id, n.title, n.type, n.summary, e.vector FROM notes n "
         "JOIN embeddings e ON e.content_hash = n.content_hash AND e.model = ? "
@@ -217,6 +237,7 @@ def hybrid_search(
     k: int = 5,
     type: str | None = None,
     tag: str | None = None,
+    project: str | None = None,
 ) -> list[Hit]:
     """Keyword and semantic results fused with reciprocal rank fusion.
 
@@ -228,8 +249,8 @@ def hybrid_search(
         return []
     depth = max(k, FUSION_DEPTH)
     lists = [
-        keyword_search(conn, query, k=depth, type=type, tag=tag),
-        semantic_search(conn, embedder, query, k=depth, type=type, tag=tag),
+        keyword_search(conn, query, k=depth, type=type, tag=tag, project=project),
+        semantic_search(conn, embedder, query, k=depth, type=type, tag=tag, project=project),
     ]
     fused: dict[str, float] = {}
     best: dict[str, Hit] = {}

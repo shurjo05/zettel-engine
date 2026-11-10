@@ -9,14 +9,22 @@ folder's logs/.
 
 The agents run with ZK_INGESTING=1 and a prompt starting with "[zk]", so their
 own sessions are never captured. They write to the vault only through the zk
-tools (`--allowedTools mcp__zk`), that is, through `zk.vault`.
+tools (`--allowedTools mcp__zk`), that is, through `zk.vault`. They get their own
+write-enabled zk server (`--mcp-config`, only that server), so the one registered
+for everyday sessions can stay read-only.
+
+Captures are ingested a few at a time (BATCH_CAPTURES, BATCH_CHARS), oldest
+first, so a backlog never lands in one agent's context. When a run changed the
+vault, the map notes are brought up to date (zk.maps) at the end.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -26,8 +34,10 @@ from zk.capture import ZK_MARKER
 from zk.index import data_dir
 from zk.ingest import list_held, list_inbox
 
+CAPTURES = "{captures}"  # replaced with this round's capture names
 INGEST_PROMPT = (
-    f"{ZK_MARKER} Process the zk inbox with the zk tools, following the zk server's instructions."
+    f"{ZK_MARKER} Process these captures in the zk inbox with the zk tools, following the zk "
+    f"server's instructions, and leave any others for later: {CAPTURES}"
 )
 RESOLVE_PROMPT = (
     f"{ZK_MARKER} Resolve the notes held in the zk inbox with the zk tools, "
@@ -35,13 +45,33 @@ RESOLVE_PROMPT = (
 )
 AGENT_TIMEOUT = 30 * 60
 STALE_LOCK = 2 * 60 * 60  # a lock older than this was left by a run that died
-MAX_ROUNDS = 3
+MAX_ROUNDS = 10
+BATCH_CAPTURES = 3  # captures per ingest run, so a backlog is read a few at a time
+BATCH_CHARS = 120_000  # ...and at most this much text per run (one capture always goes)
 
 
-def default_commands(resolve_model: str | None = "opus") -> dict[str, list[str]]:
-    """Headless Claude Code runs, limited to the zk tools."""
+def mcp_config(vault_dir: Path) -> Path:
+    """A config with the write-enabled zk server, just for the headless runs."""
+    path = data_dir() / "zk-agents-mcp.json"
+    server = {
+        "command": sys.executable,
+        "args": ["-m", "zk", "serve", str(vault_dir.resolve()), "--allow-writes"],
+    }
+    text = json.dumps({"mcpServers": {"zk": server}}, indent=2)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists() or path.read_text(encoding="utf-8") != text:
+        path.write_text(text, encoding="utf-8")
+    return path
+
+
+def default_commands(
+    resolve_model: str | None = "opus", vault_dir: Path | None = None
+) -> dict[str, list[str]]:
+    """Headless Claude Code runs, limited to the zk tools of their own write-enabled server."""
     claude = shutil.which("claude") or "claude"
     base = ["--allowedTools", "mcp__zk"]
+    if vault_dir is not None:
+        base += ["--mcp-config", str(mcp_config(vault_dir)), "--strict-mcp-config"]
     resolve = [claude, "-p", RESOLVE_PROMPT, *base]
     if resolve_model:
         resolve += ["--model", resolve_model]
@@ -81,6 +111,45 @@ def lock_path() -> Path:
     return data_dir() / "process.lock"
 
 
+def batches(captures: list[dict], tried: set[str]) -> list[str]:
+    """The next captures to ingest: oldest untried first, within the batch limits."""
+    out, size = [], 0
+    for c in captures:
+        if c["name"] in tried:
+            continue
+        if out and (len(out) >= BATCH_CAPTURES or size + c["chars"] > BATCH_CHARS):
+            break
+        out.append(c["name"])
+        size += c["chars"]
+    return out
+
+
+def _with_captures(command: list[str] | str, names: list[str]) -> list[str] | str:
+    listed = ", ".join(names)
+    if isinstance(command, str):
+        return command.replace(CAPTURES, listed)
+    return [part.replace(CAPTURES, listed) for part in command]
+
+
+def refresh_maps(vault_dir: Path, log) -> None:
+    """Rebuild the index and embeddings, then bring the map notes up to date."""
+    from zk import maps
+    from zk.embed import FastEmbedder, update_embeddings
+    from zk.index import DEFAULT_EXCLUDES, build_index, default_db_path, open_db
+
+    conn = open_db(default_db_path(vault_dir))
+    try:
+        build_index(conn, vault_dir, DEFAULT_EXCLUDES)
+        embedder = FastEmbedder()
+        update_embeddings(conn, embedder)
+        build_index(conn, vault_dir, DEFAULT_EXCLUDES)
+        result = maps.update(vault_dir, conn, embedder)
+        build_index(conn, vault_dir, DEFAULT_EXCLUDES)  # so the next brief lists them
+    finally:
+        conn.close()
+    log.write(maps.format_update(result) + "\n")
+
+
 def _run(command: list[str] | str, vault_dir: Path, log) -> int:
     log.write(f"$ {command if isinstance(command, str) else subprocess.list2cmdline(command)}\n")
     log.flush()
@@ -115,7 +184,7 @@ def run(
     log_path: Path | None = None,
 ) -> dict:
     """Catch up (optionally), then ingest and resolve while there is work. Returns a summary."""
-    commands = commands or default_commands()
+    commands = commands or default_commands(vault_dir=vault_dir)
     now = datetime.now()
     log_path = log_path or data_dir() / "logs" / f"process-{now:%Y-%m-%d-%H%M%S}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -130,12 +199,14 @@ def run(
                 log.write(f"catch-up: {f['session']}: {f['saved'] or 'skipped'} ({f['why']})\n")
         tried: set[str] = set()
         for _ in range(MAX_ROUNDS):
-            waiting = {c["name"] for c in list_inbox(vault_dir)}
-            if not waiting - tried:  # nothing new; a capture the agent left is not retried
+            waiting = list_inbox(vault_dir)
+            batch = batches(waiting, tried)
+            if not batch:  # nothing new; a capture the agent left is not retried
                 break
-            tried |= waiting
-            log.write(f"ingest: {len(waiting)} capture(s) in the inbox\n")
-            _run(commands["ingest"], vault_dir, log)
+            tried |= set(batch)
+            os.utime(lock_path())  # still running: keep the lock from looking stale
+            log.write(f"ingest: {len(batch)} of {len(waiting)} capture(s) in the inbox\n")
+            _run(_with_captures(commands["ingest"], batch), vault_dir, log)
             summary["ingest_runs"] += 1
             if list_held(vault_dir):
                 log.write(f"resolve: {len(list_held(vault_dir))} held note(s)\n")
@@ -147,5 +218,11 @@ def run(
             # Notes held earlier (or a resolve that failed) still get resolved.
             _run(commands["resolve"], vault_dir, log)
             summary["resolve_runs"] += 1
+        if summary["ingest_runs"] or summary["resolve_runs"]:
+            try:
+                refresh_maps(vault_dir, log)
+                summary["maps"] = True
+            except Exception as exc:  # maps can wait for the next run; the notes are in
+                log.write(f"maps not updated: {exc}\n")
         log.write(f"done: {summary}\n")
     return summary

@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-NOTE_TYPES = ("concept", "pattern", "problem", "decision")
+NOTE_TYPES = ("concept", "pattern", "problem", "decision", "map")  # maps are generated
 
 _FENCE = re.compile(r"^\s*(```|~~~)")
 # A closing run of #s only counts after a space, so "# Events in C#" keeps its "#".

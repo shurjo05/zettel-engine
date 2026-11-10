@@ -32,18 +32,27 @@ INSTRUCTIONS = """\
 Tools for a personal Zettelkasten: short Markdown notes, one idea each, linked to each other.
 Start with search_notes; its hits carry summaries, which often answer the question on their own.
 Open a note with get_note only when you need its full text, and use get_related to follow links
-and shared tags. Name notes by the id or path a tool returned. All tools are read-only.
+and shared tags. Map notes (type map) list the notes on one topic or one project with a line each;
+get_note opens a map by name, and search_notes can keep to one project. Name notes by the id or
+path a tool returned. All tools are read-only.
 """
 
 WRITE_INSTRUCTIONS = """
 Ingest tools are enabled, and notes are written without review. To ingest a conversation or an
 inbox capture (list_inbox, then read_capture): find the atomic ideas worth finding again in a
-month (one idea per note; most conversations hold zero to three) and skip chit-chat and one-off
-debugging. For each idea, search_notes and check_duplicates first; if an existing note already
+month (one idea per note; most conversations hold zero to three) and skip chit-chat. An error
+whose cause and fix would help the next time it appears is worth a problem note; a typo is not.
+For each idea, search_notes and check_duplicates first; if an existing note already
 covers it, leave it out. Then call ingest_notes once with all of them, each with one to three test
 questions it answers, worded the way someone would ask rather than copied from the note. Pass
 `capture` when the notes come from an inbox capture. Report the notes written and any warnings.
 A capture with nothing worth keeping is set aside with discard(kind="capture").
+
+A capture whose source starts with repo: is not a conversation: it is the structure of one of the
+person's own projects (folders, README, manifests, class and function names, commit subjects).
+Write zero to five notes on what is reusable from it: how the project is built (its architecture
+and the patterns it uses), decisions it shows, and problems its commits show were solved. Skip
+what any project of that kind has. Its notes are recorded under that project automatically.
 
 Notes held as likely duplicates are resolved one at a time: list_held, then get_held_pair. If the
 held note states the same idea as the closest note (a reworded or narrower version of it), call
@@ -94,6 +103,7 @@ def create_server(
         type: str | None = None,
         tag: str | None = None,
         mode: str | None = None,
+        project: str | None = None,
     ) -> str:
         """Search the notes. Returns up to k hits, best first, without bodies.
 
@@ -102,7 +112,8 @@ def create_server(
         terms. mode "semantic" ranks by meaning only (local embeddings, cosine similarity).
         Each hit has id, path, title, type, summary and score, and a short snippet with
         [matched words] when keyword search matched.
-        Optional filters: type (concept, pattern, problem, decision) and tag.
+        Optional filters: type (concept, pattern, problem, decision, or map for the map notes),
+        tag, and project (notes recorded from one project, by its folder name).
         """
         if mode is None:
             mode = DEFAULT_MODE if embedder is not None else "keyword"
@@ -114,7 +125,9 @@ def create_server(
         return run(
             lambda c: [
                 h.to_dict()
-                for h in search(c, query, k=k, type=type, tag=tag, mode=mode, embedder=embedder)
+                for h in search(
+                    c, query, k=k, type=type, tag=tag, mode=mode, embedder=embedder, project=project
+                )
             ],
             embed=mode != "keyword",
         )

@@ -1,0 +1,263 @@
+"""What reaches Claude without being asked for: a brief at session start, a one-time nudge
+before searching files, and notes that match a failed command.
+
+Claude Code runs these through hook.py and adds what they print to the session's
+context, so each is built to cost little:
+- the brief names the map notes (a capped list) and, in a known project, lists
+  that project's notes; it stays under BRIEF_CHARS (about 1,000 tokens);
+- the nudge is one line, once per session, the first time Claude greps or globs;
+- after a failed shell command, up to two notes whose summary matches the error,
+  and only when they clearly match; a note is shown once per session.
+
+Everything here only reads the index (opened read-only) and imports nothing
+heavy: hooks run on every session and every failed command. Each hook's small
+per-session record lives in the zk data folder, never in the project.
+Text is written as facts about the vault, not as instructions.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import sqlite3
+import time
+from pathlib import Path
+
+from zk.index import data_dir, default_db_path
+from zk.search import _WORD, keyword_search, project_slug
+
+BRIEF_CHARS = 4000
+MAX_TOPICS = 15
+MAX_PROJECTS = 20
+MAX_PROJECT_ENTRIES = 12
+ERROR_HITS = 2
+MAX_ERROR_WORDS = 12
+STATE_DAYS = 7  # per-session records older than this are cleared at session start
+NUDGE = (
+    "The zk vault (search_notes) holds notes from past projects that may already "
+    "describe this code or problem; a search returns summaries for a few hundred tokens."
+)
+_ERRORISH = re.compile(
+    r"(?i)error|exception|fail|fatal|cannot|can't|not found|no such|undefined|denied|"
+    r"traceback|refused|invalid|missing|unresolved|timed out"
+)
+_STOP = frozenset(
+    "the and for with from that this was were are not but you your have has had can cannot "
+    "could would should into onto file line exit code error errors failed failure fatal "
+    "exception warning found none null true false see more info run".split()
+)
+
+
+def open_index(vault_dir: Path, db: Path | None = None) -> sqlite3.Connection | None:
+    """The vault's index, read-only, or None if it hasn't been built."""
+    path = db or default_db_path(vault_dir)
+    if not path.exists():
+        return None
+    conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def project_root(cwd: str | Path | None) -> Path | None:
+    """The git repository a folder is in (its top folder), or None."""
+    if not cwd or not Path(cwd).exists():
+        return None
+    here = Path(cwd)
+    for folder in (here, *here.parents):
+        if (folder / ".git").exists():
+            return folder
+    return None
+
+
+def project_of(cwd: str | Path | None) -> str | None:
+    """The project a session is in: its repository's folder name, else the folder's own."""
+    if not cwd:
+        return None
+    root = project_root(cwd) or Path(cwd)
+    return project_slug(root.name) or None
+
+
+# Per-session records.
+
+
+def _state_path(session_id: str) -> Path:
+    safe = re.sub(r"[^A-Za-z0-9_-]", "", session_id)[:64] or "unknown"
+    return data_dir() / "hook-state" / f"{safe}.json"
+
+
+def _load_state(session_id: str) -> dict:
+    try:
+        return json.loads(_state_path(session_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_state(session_id: str, state: dict) -> None:
+    path = _state_path(session_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def clear_old_state(now: float | None = None) -> None:
+    """Remove per-session records older than STATE_DAYS (zk's own files, not vault content)."""
+    now = time.time() if now is None else now
+    folder = data_dir() / "hook-state"
+    for path in folder.glob("*.json") if folder.is_dir() else []:
+        try:
+            if now - path.stat().st_mtime > STATE_DAYS * 86400:
+                path.unlink()
+        except OSError:
+            pass
+
+
+# The brief.
+
+
+def _notes_section(body: str) -> list[str]:
+    """The entry lines under a map's "## Notes" heading."""
+    _, _, rest = body.partition("## Notes")
+    return [line for line in rest.splitlines() if line.startswith("- [[")]
+
+
+def brief(conn: sqlite3.Connection, cwd: str | Path | None = None) -> str:
+    """What every session is told about the vault: its maps, and this project's notes."""
+    count = conn.execute("SELECT count(*) FROM notes WHERE type IS NOT 'map'").fetchone()[0]
+    if not count:
+        return ""
+    maps = conn.execute(
+        "SELECT path, body, frontmatter FROM notes WHERE type = 'map' ORDER BY path"
+    ).fetchall()
+    topics, projects, here = [], [], None
+    current = project_of(cwd)
+    for m in maps:
+        front = json.loads(m["frontmatter"] or "{}")
+        name = m["path"].rsplit("/", 1)[-1].removesuffix(".md")
+        size = len(front.get("members") or []) or len(_notes_section(m["body"]))
+        if front.get("map") == "project":
+            projects.append((size, name))
+            if current and front.get("project") == current:
+                here = (name, m["body"])
+        else:
+            label = str(front.get("title", name)).removeprefix("Map: ")
+            topics.append((size, f"{name} ({label}; {size})"))
+    lines = [
+        f"The zk vault holds {count} notes from the user's past work. search_notes finds them "
+        "by meaning or keyword and returns summaries; get_note opens one note or map in full."
+    ]
+    if topics:
+        shown = [t for _, t in sorted(topics, key=lambda t: (-t[0], t[1]))[:MAX_TOPICS]]
+        more = len(topics) - len(shown)
+        lines.append("Topic maps: " + ", ".join(shown) + (f", and {more} more" if more else ""))
+    if projects:
+        shown = [f"{n} ({s})" for s, n in sorted(projects, key=lambda p: (-p[0], p[1]))]
+        more = max(0, len(shown) - MAX_PROJECTS)
+        lines.append(
+            "Project maps: "
+            + ", ".join(shown[:MAX_PROJECTS])
+            + (f", and {more} more" if more else "")
+        )
+    if here:
+        name, body = here
+        entries = _notes_section(body)
+        lines.append(f"This folder is the project {current}; its map {name} lists:")
+        lines += entries[:MAX_PROJECT_ENTRIES]
+        if len(entries) > MAX_PROJECT_ENTRIES:
+            lines.append(f"(and {len(entries) - MAX_PROJECT_ENTRIES} more in {name})")
+    text = "\n".join(lines)
+    if len(text) > BRIEF_CHARS:
+        text = text[: BRIEF_CHARS - 4].rsplit("\n", 1)[0] + "\n..."
+    return text
+
+
+# The nudge.
+
+
+def nudge(event: dict) -> str | None:
+    """One line, the first time a session greps or globs; nothing after that."""
+    if event.get("tool_name") not in ("Grep", "Glob"):
+        return None
+    sid = str(event.get("session_id") or "")
+    state = _load_state(sid)
+    if state.get("nudged"):
+        return None
+    state["nudged"] = True
+    _save_state(sid, state)
+    return NUDGE
+
+
+# Notes for a failed command.
+
+
+def error_query(error: str) -> list[str]:
+    """The words worth searching for in a failed command's output.
+
+    The error lines (usually at the end), without paths, numbers or common words.
+    """
+    lines = [ln.strip() for ln in error.splitlines() if ln.strip()]
+    if lines and re.match(r"(?i)exit code -?\d+$", lines[0]):
+        lines = lines[1:]
+    errorish = [ln for ln in lines if _ERRORISH.search(ln)]
+    picked = errorish[-3:] or lines[-2:]
+    words: list[str] = []
+    for line in picked:
+        for token in line.split():
+            if "/" in token or "\\" in token or "://" in token:
+                continue  # paths and URLs are specific to this machine
+            for w in _WORD.findall(token.lower()):
+                if len(w) >= 3 and not w.isdigit() and w not in _STOP and not _hexlike(w):
+                    words.append(w)
+    return list(dict.fromkeys(words))[:MAX_ERROR_WORDS]
+
+
+def _hexlike(word: str) -> bool:
+    return len(word) >= 7 and bool(re.fullmatch(r"[0-9a-f]+", word))
+
+
+def _matched(words: list[str], text: str) -> int:
+    """How many query words a note's title, tags and summary contain (by 5-letter stem)."""
+    have = {w[:5] for w in _WORD.findall(text.lower())}
+    return sum(w[:5] in have for w in words)
+
+
+def for_error(conn: sqlite3.Connection, error: str, skip: set[str] = frozenset()) -> list[dict]:
+    """Notes that clearly match an error: most of their top words appear in it."""
+    words = error_query(error)
+    if len(words) < 2:
+        return []
+    out = []
+    for hit in keyword_search(conn, " ".join(words), k=5):
+        if hit.path in skip:
+            continue
+        tags = conn.execute("SELECT tags FROM notes WHERE path = ?", (hit.path,)).fetchone()
+        text = " ".join([hit.title, hit.summary, " ".join(json.loads(tags[0] or "[]"))])
+        matched = _matched(words, text)
+        if matched >= 2 and matched >= 0.3 * len(words):
+            out.append({"path": hit.path, "title": hit.title, "summary": hit.summary})
+        if len(out) == ERROR_HITS:
+            break
+    return out
+
+
+def on_failure(conn: sqlite3.Connection, event: dict) -> str | None:
+    """Text for a failed shell command, or None when no note clearly matches."""
+    if event.get("tool_name") not in ("Bash", "PowerShell") or event.get("is_interrupt"):
+        return None
+    sid = str(event.get("session_id") or "")
+    state = _load_state(sid)
+    shown = set(state.get("shown") or [])
+    hits = for_error(conn, str(event.get("error") or ""), shown)
+    if not hits:
+        return None
+    state["shown"] = sorted(shown | {h["path"] for h in hits})
+    _save_state(sid, state)
+    lines = ["Notes in the zk vault match this error (get_note opens one):"]
+    for h in hits:
+        stem = h["path"].rsplit("/", 1)[-1].removesuffix(".md")
+        summary = " ".join(h["summary"].split())
+        if len(summary) > 240:
+            summary = summary[:237].rstrip() + "..."
+        lines.append(f"- {stem}: {h['title']}. {summary}")
+    return "\n".join(lines)
