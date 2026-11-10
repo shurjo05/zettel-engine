@@ -877,12 +877,12 @@ def main(argv: list[str] | None = None) -> int:
     p_schedule.add_argument("--at", default="21:00", help="time of day, HH:MM (default 21:00)")
     p_schedule.add_argument(
         "--review-day",
-        default="sun",
+        default="fri",
         choices=[*hooks.DAYS, "never"],
-        help="day of the weekly health review (default sun; never: no review task)",
+        help="day of the weekly health review (default fri; never: no review task)",
     )
     p_schedule.add_argument(
-        "--review-at", default="20:00", help="time of the weekly review, HH:MM (default 20:00)"
+        "--review-at", default="12:00", help="time of the weekly review, HH:MM (default 12:00)"
     )
     p_schedule.add_argument("--dry-run", action="store_true", help="print the task, add nothing")
     p_schedule.set_defaults(func=cmd_schedule)

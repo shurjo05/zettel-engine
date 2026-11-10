@@ -221,8 +221,8 @@ uv run zk hooks status C:\path\to\vault
   so a backlog never fills one agent's context. A run that changed the vault ends by bringing the
   map notes up to date.
 - **`zk schedule install`** adds a daily Windows task, `zk catch-up`, that runs
-  `zk process --catch-up`, and a weekly one, `zk review` (Sunday 20:00 by default; `--review-day`,
-  `--review-at`, `--review-day never`). If the PC was off at that time, a task runs at the next
+  `zk process --catch-up`, and a weekly one, `zk review` (Friday 12:00 by default, when the PC
+  is usually on; `--review-day`, `--review-at`, `--review-day never`). If the PC was off at that time, a task runs at the next
   chance. `zk schedule status` and `zk schedule remove` go with them. Elsewhere it prints cron lines.
 
 Logs go to the zk data folder's `logs/`. The headless agents bring their own write-enabled zk

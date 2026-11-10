@@ -438,4 +438,5 @@ memento-vault, superbrain, graphify, everything-claude-code and ruflo.
 - **Backlogs are ingested a few captures at a time**, oldest first, so 18 waiting sessions (about
   440,000 tokens) never land in one agent's context.
 - **A weekly review, not a daily one** (Shurjo): health, retrieval on the test questions, map
-  changes pending, hold drift and the brief's size, with no model.
+  changes pending, hold drift and the brief's size, with no model. It runs Fridays at 12:00 by
+  default, inside the 9:00 to 15:00 window when Shurjo's tools are usually open.

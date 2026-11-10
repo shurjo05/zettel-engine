@@ -302,8 +302,8 @@ def install_schedule(
     at: str,
     xml_dir: Path,
     dry_run: bool = False,
-    review_on: str | None = "sun",
-    review_at: str = "20:00",
+    review_on: str | None = "fri",
+    review_at: str = "12:00",
 ) -> dict:
     """The daily catch-up at `at`, and (unless review_on is None) the weekly review."""
     tasks = [(TASK_NAME, "zk-catch-up.xml", task_xml(vault_dir, at))]
