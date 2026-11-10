@@ -419,6 +419,15 @@ memento-vault, superbrain, graphify, everything-claude-code and ruflo.
   from the capture's repository and which a merge carries over. Patterns and decisions from a
   single project stay in its map until they hold for two projects (everything-claude-code's
   promotion rule), so one project's habits don't read as general practice.
+- **One project, many spellings** (found in the dry run on the real vault). Older notes name their
+  project as `local-repo:<folder>/<path>` and `zk learn` as `repo:<folder>`, so all three kinds
+  count. Names that differ only in punctuation (`AphidDetection`, `aphid-detection`) or by words
+  added at the end (`ruflo`, `ruflo-claude-flow`; `nautilustrx`, `nautilustrx-shurjo05` from
+  GitHub Classroom) are one project with one map, named after the shortest, and the others kept as
+  its aliases. The session's folder is matched the same way. The cost is that an unrelated
+  `chat` and `chat-app` would share a map; for one person's projects that's rare, and visible.
+- **Topic labels only from tags most notes carry** (two thirds), else the most central note's
+  title. A cluster of five C# notes, three on xUnit, was labelled "testing" though two weren't.
 - **Push only where it's cheap and likely to help.** A session-start brief (target under 1,000
   tokens), a one-line nudge the first time a session greps or globs (graphify's idea), and notes
   for a failed shell command only when most of their words match the error, once per session.

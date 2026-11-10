@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 
 from zk.index import data_dir, default_db_path
-from zk.search import _WORD, keyword_search, project_slug
+from zk.search import _WORD, keyword_search, project_slug, same_project
 
 BRIEF_CHARS = 4000
 MAX_TOPICS = 15
@@ -132,14 +132,18 @@ def brief(conn: sqlite3.Connection, cwd: str | Path | None = None) -> str:
     ).fetchall()
     topics, projects, here = [], [], None
     current = project_of(cwd)
+    best = 0  # 2: this folder's own name; 1: a name that is the same project
     for m in maps:
         front = json.loads(m["frontmatter"] or "{}")
         name = m["path"].rsplit("/", 1)[-1].removesuffix(".md")
         size = len(front.get("members") or []) or len(_notes_section(m["body"]))
         if front.get("map") == "project":
             projects.append((size, name))
-            if current and front.get("project") == current:
-                here = (name, m["body"])
+            names = [front.get("project"), *(front.get("aliases") or [])]
+            names = [str(n) for n in names if n]
+            fit = 2 if current in names else int(any(same_project(current, n) for n in names))
+            if current and fit > best:
+                best, here = fit, (name, front.get("project") or current, m["body"])
         else:
             label = str(front.get("title", name)).removeprefix("Map: ")
             topics.append((size, f"{name} ({label}; {size})"))
@@ -160,9 +164,9 @@ def brief(conn: sqlite3.Connection, cwd: str | Path | None = None) -> str:
             + (f", and {more} more" if more else "")
         )
     if here:
-        name, body = here
+        name, project, body = here
         entries = _notes_section(body)
-        lines.append(f"This folder is the project {current}; its map {name} lists:")
+        lines.append(f"This folder is the project {project}; its map {name} lists:")
         lines += entries[:MAX_PROJECT_ENTRIES]
         if len(entries) > MAX_PROJECT_ENTRIES:
             lines.append(f"(and {len(entries) - MAX_PROJECT_ENTRIES} more in {name})")

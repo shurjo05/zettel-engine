@@ -241,9 +241,9 @@ Until M12, notes reached Claude only when it chose to search. Now the vault show
 cheaply, at a few points, and Claude opens more only when it needs it:
 
 1. **Map notes**, `zk maps VAULT`. A map note lists the notes on one topic or one project, a line
-   each. Topic maps come from the clusters `zk suggest` finds; project maps from notes' `project:`
-   sources. They live in `maps/`, are rewritten after each `zk process` run that changed the
-   vault, and keep their name while a topic keeps half its notes. A map edited by hand is left
+   each. Topic maps come from the clusters `zk suggest` finds; project maps from notes'
+   `project:`, `repo:` and `local-repo:` sources (spellings of one project share a map). They
+   live in `maps/`, are rewritten after each `zk process` run that changed the vault, and keep their name while a topic keeps half its notes. A map edited by hand is left
    alone from then on, and a map whose topic is gone moves to `maps/retired/` (never deleted).
    Search leaves maps out unless asked (`type: map`). Patterns and decisions from one project stay
    in that project's map, and join a topic map once they hold for two projects.

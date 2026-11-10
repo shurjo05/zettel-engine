@@ -75,6 +75,44 @@ def project_slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
+_SOURCE_PROJECT = re.compile(r"^\s*(?:project|repo|local-repo):\s*([^/\\(+:]+)", re.I)
+
+
+def source_project(source: str) -> str | None:
+    """The project a source names, as a slug, or None.
+
+    `project:<name>` (sessions), `repo:<name>` (zk learn) and `local-repo:<name>/<path>`
+    (the legacy import) all name the folder the note came from.
+    """
+    m = _SOURCE_PROJECT.match(source)
+    return (project_slug(m.group(1)) or None) if m else None
+
+
+def same_project(a: str, b: str) -> bool:
+    """Whether two project slugs name the same project.
+
+    They do when they differ only in punctuation (aphiddetection, aphid-detection) or
+    when one is the other plus words at the end (ruflo, ruflo-claude-flow;
+    nautilustrx, nautilustrx-shurjo05, as GitHub Classroom names copies).
+    """
+    if not a or not b:
+        return False
+    if a.replace("-", "") == b.replace("-", ""):
+        return True
+    short, long = sorted((a, b), key=len)
+    return long.startswith(short + "-")
+
+
+def _source_in_project(source: str, slug: str) -> bool:
+    found = source_project(source or "")
+    return bool(found) and same_project(found, slug)
+
+
+def use_project_filter(conn: sqlite3.Connection) -> None:
+    """Make the SQL function the project filter needs available on this connection."""
+    conn.create_function("zk_in_project", 2, _source_in_project, deterministic=True)
+
+
 def _filters(type: str | None, tag: str | None, project: str | None = None) -> tuple[str, list]:
     sql, params = "", []
     if type:
@@ -83,12 +121,8 @@ def _filters(type: str | None, tag: str | None, project: str | None = None) -> t
     else:
         sql += " AND n.type IS NOT 'map'"  # map notes list other notes; open them by name
     if project:
-        sql += (
-            " AND EXISTS (SELECT 1 FROM json_each(n.sources) "
-            "WHERE lower(value) = ? OR lower(value) LIKE ?)"
-        )
-        slug = project_slug(project)
-        params += [f"project:{slug}", f"project:{slug}:%"]
+        sql += " AND EXISTS (SELECT 1 FROM json_each(n.sources) WHERE zk_in_project(value, ?))"
+        params.append(project_slug(project))
     if tag:
         sql += " AND EXISTS (SELECT 1 FROM json_each(n.tags) WHERE lower(value) = ?)"
         params.append(tag.lower())
@@ -140,6 +174,8 @@ def keyword_search(
         WHERE notes_fts MATCH ?
     """
     where, extra = _filters(type, tag, project)
+    if project:
+        use_project_filter(conn)
     sql += where + " ORDER BY score DESC, n.path LIMIT ?"
     params: list = [match, *extra, k]
 
@@ -203,6 +239,8 @@ def _nearest(
     import numpy as np
 
     where, params = _filters(type, tag, project)
+    if project:
+        use_project_filter(conn)
     rows = conn.execute(
         "SELECT n.path, n.id, n.title, n.type, n.summary, e.vector FROM notes n "
         "JOIN embeddings e ON e.content_hash = n.content_hash AND e.model = ? "

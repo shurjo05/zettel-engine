@@ -13,6 +13,11 @@ A topic keeps its map's name while the cluster still shares half its notes with
 it, so maps don't churn as notes are added. A map whose topic is gone is moved
 to maps/retired/, never deleted. All writes go through `zk.vault`, in one commit.
 
+A project is named by its notes' project:, repo: or local-repo: sources (sessions,
+`zk learn` and the legacy import). Names that differ only in punctuation, or by
+words added at the end (ruflo, ruflo-claude-flow), are one project with one map,
+named after the shortest; its other names are kept as aliases.
+
 Patterns and decisions that come from a single project stay in that project's
 map; they reach the topic maps once they hold for two or more projects (a merge
 gives a note both notes' sources). Concepts and problems are general knowledge
@@ -32,7 +37,7 @@ from pathlib import Path
 from zk import maintain, vault
 from zk.embed import Embedder
 from zk.notes import parse_note
-from zk.search import project_slug
+from zk.search import same_project, source_project
 
 MAPS_DIR = "maps"
 RETIRED_DIR = "maps/retired"
@@ -40,13 +45,38 @@ SAME_MAP = 0.5  # a cluster keeps a map's name while they share this much (Jacca
 PROJECT_MIN = 2  # a project gets a map once it has this many notes
 SCOPED_TYPES = ("pattern", "decision")  # these stay in their project until a second one
 LINE_CHARS = 160  # each entry: the note's title and the start of its summary
-_PROJECT = re.compile(r"^project:([^:]+)", re.I)
+LABEL_SHARE = 2 / 3  # a tag names a topic map only if this share of its notes carry it
 
 
 def projects_of(sources: list[str]) -> list[str]:
-    """The projects a note's sources name, as slugs, in order."""
-    found = (_PROJECT.match(s.strip()) for s in sources)
-    return list(dict.fromkeys(project_slug(m.group(1)) for m in found if m))
+    """The projects a note's sources name (project:, repo: or local-repo:), as slugs, in order."""
+    return list(dict.fromkeys(p for p in map(source_project, sources) if p))
+
+
+def group_projects(slugs: list[str]) -> list[list[str]]:
+    """Slugs that name the same project (search.same_project), shortest name first."""
+    groups: list[list[str]] = []
+    for slug in sorted(set(slugs), key=lambda s: (len(s.replace("-", "")), -s.count("-"), s)):
+        home = next((g for g in groups if any(same_project(slug, o) for o in g)), None)
+        if home is None:
+            groups.append([slug])
+        else:
+            home.append(slug)
+    return groups
+
+
+def _label(members: set[str], notes: list[sqlite3.Row], fallback: str) -> str:
+    """The tags most of a cluster's notes carry, else the title of its most central note."""
+    counts: dict[str, int] = {}
+    for r in notes:
+        if r["path"] in members:
+            for tag in dict.fromkeys(json.loads(r["tags"] or "[]")):
+                counts[tag] = counts.get(tag, 0) + 1
+    common = sorted(
+        (t for t, c in counts.items() if t != "map" and c >= LABEL_SHARE * len(members)),
+        key=lambda t: -counts[t],
+    )[:3]
+    return ", ".join(common) or fallback
 
 
 def _slug(text: str) -> str:
@@ -69,6 +99,7 @@ def _existing(rows: list[sqlite3.Row]) -> dict[str, dict]:
                 "path": r["path"],
                 "kind": front.get("map"),
                 "project": front.get("project"),
+                "aliases": set(front.get("aliases") or [front.get("project")]),
                 "notes": set(front.get("members") or []),
             }
     return out
@@ -89,8 +120,12 @@ def plan(conn: sqlite3.Connection, embedder: Embedder) -> list[dict]:
     notes = [r for r in rows if r["type"] != "map"]
     existing = _existing(rows)
     projects = {r["path"]: projects_of(json.loads(r["sources"] or "[]")) for r in notes}
+    groups = group_projects([p for names in projects.values() for p in names])
+    group_of = {slug: i for i, g in enumerate(groups) for slug in g}
     scoped = {
-        r["path"] for r in notes if r["type"] in SCOPED_TYPES and len(projects[r["path"]]) == 1
+        r["path"]
+        for r in notes
+        if r["type"] in SCOPED_TYPES and len({group_of[p] for p in projects[r["path"]]}) == 1
     }
     taken = {r["path"].rsplit("/", 1)[-1].removesuffix(".md") for r in rows}
     out = []
@@ -104,9 +139,8 @@ def plan(conn: sqlite3.Connection, embedder: Embedder) -> list[dict]:
             return len(members & e["notes"]) / len(members | e["notes"])
 
         best = max(free, key=lambda n: (overlap(free[n]), n), default=None)
-        label = ", ".join(cluster["shared_tags"]) or next(
-            r["title"] for r in notes if r["path"] == cluster["closest_to_map"]["path"]
-        )
+        hub = cluster["closest_to_map"]["path"]
+        label = _label(members, notes, next(r["title"] for r in notes if r["path"] == hub))
         if best is not None and overlap(free[best]) >= SAME_MAP:
             name = best
             del free[best]
@@ -115,22 +149,28 @@ def plan(conn: sqlite3.Connection, embedder: Embedder) -> list[dict]:
         taken.add(name)
         out.append({"name": name, "kind": "topic", "label": label, "notes": sorted(members)})
 
-    # Projects with enough notes.
-    by_project: dict[str, list[str]] = {}
+    # Projects with enough notes; names that are the same project share one map.
+    by_project: dict[str, set[str]] = {}
     for path, names in projects.items():
         for p in names:
-            by_project.setdefault(p, []).append(path)
-    project_maps = {e["project"]: n for n, e in existing.items() if e["kind"] == "project"}
-    for slug, members in sorted(by_project.items()):
+            by_project.setdefault(p, set()).add(path)
+    project_maps = {n: e for n, e in existing.items() if e["kind"] == "project"}
+    for group in groups:
+        members = set().union(*(by_project[s] for s in group))
         if len(members) < PROJECT_MIN:
             continue
-        name = project_maps.get(slug) or _unique(f"project-{slug}", taken)
+        old = next((n for n, e in project_maps.items() if e["aliases"] & set(group)), None)
+        slug = project_maps[old]["project"] if old else group[0]
+        name = old or _unique(f"project-{slug}", taken)
+        if old:
+            del project_maps[old]
         taken.add(name)
         out.append(
             {
                 "name": name,
                 "kind": "project",
                 "project": slug,
+                "aliases": sorted(set(group) | {slug}),
                 "label": slug,
                 "notes": sorted(members),
             }
@@ -180,6 +220,7 @@ def render(spec: dict, rows: dict[str, sqlite3.Row], created: str) -> str:
         "type": "map",
         "map": spec["kind"],
         **({"project": spec["project"]} if spec.get("project") else {}),
+        **({"aliases": spec["aliases"]} if len(spec.get("aliases") or []) > 1 else {}),
         "tags": ["map"],
         "sources": ["zk:maps"],
         "created": created,

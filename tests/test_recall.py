@@ -90,6 +90,18 @@ def test_project_names_are_normalised():
     assert maps.projects_of(["project:Robot Arm:2026", "capture:x", "project:robot-arm"]) == [
         "robot-arm"
     ]
+    assert maps.projects_of(
+        ["local-repo:rpi5_baseline/launch/x.py", "repo:NautilusTrx", "local-repo:ksu-cis300 (all)"]
+    ) == ["rpi5-baseline", "nautilustrx", "ksu-cis300"]
+    groups = maps.group_projects(
+        ["ruflo-claude-flow", "ruflo", "chat501", "chat", "aphiddetection", "aphid-detection"]
+    )
+    assert groups == [
+        ["chat"],
+        ["ruflo", "ruflo-claude-flow"],
+        ["chat501"],
+        ["aphid-detection", "aphiddetection"],
+    ]
 
 
 def test_a_project_pattern_reaches_topic_maps_only_from_two_projects(mapped):
@@ -128,6 +140,46 @@ def test_the_brief_names_maps_and_lists_the_current_project(mapped, tmp_path):
     assert "This folder is the project robot-arm" in text and "- [[robot-camera]]" in text
     elsewhere = recall.brief(conn, tmp_path)
     assert "This folder" not in elsewhere and len(elsewhere) < recall.BRIEF_CHARS
+
+
+def test_one_project_under_several_names_gets_one_map_and_is_found_from_its_folder(
+    mapped, tmp_path
+):
+    vault, conn, embedder = mapped
+    note(vault, "robot-servo", "Servo limits", "Clamp the duty cycle.",
+         sources=["local-repo:robot_arm-shurjo05/src/servo.cpp + pwm.cpp"])  # fmt: skip
+    for name, source in (("a", "project:ruflo"), ("b", "project:ruflo-claude-flow"),
+                         ("c", "repo:Ruflo-Claude-Flow")):  # fmt: skip
+        note(vault, f"swarm-{name}", f"Swarm {name}", "Queen agent assigns work.", sources=[source])
+    refresh(vault, conn, embedder)
+    result = maps.update(vault, conn, embedder)
+    assert "maps/project-ruflo.md" in result["new"]
+    assert not (vault / "maps" / "project-ruflo-claude-flow.md").exists()
+    ruflo = (vault / "maps" / "project-ruflo.md").read_text(encoding="utf-8")
+    assert all(f"[[swarm-{n}]]" in ruflo for n in "abc") and "ruflo-claude-flow" in ruflo
+    arm = (vault / "maps" / "project-robot-arm.md").read_text(encoding="utf-8")
+    assert "[[robot-servo]]" in arm and "robot-arm-shurjo05" in arm
+    refresh(vault, conn, embedder)
+
+    # The session's folder may be spelt like any of the project's names.
+    for folder, project in (("RobotArm", "robot-arm"), ("ruflo-claude-flow", "ruflo")):
+        repo = tmp_path / folder
+        (repo / ".git").mkdir(parents=True)
+        assert f"This folder is the project {project};" in recall.brief(conn, repo)
+    found = {h.path for h in search(conn, "servo duty cycle", k=10, project="robot-arm")}
+    assert "notes/robot-servo.md" in found
+
+
+def test_a_topic_map_is_named_only_by_tags_most_of_its_notes_carry():
+    rows = [
+        {"path": "a", "tags": '["csharp", "xunit", "testing"]'},
+        {"path": "b", "tags": '["csharp", "xunit", "testing"]'},
+        {"path": "c", "tags": '["csharp", "linq"]'},
+        {"path": "d", "tags": '["csharp", "razor"]'},
+    ]
+    assert maps._label({"a", "b", "c", "d"}, rows, "Hub title") == "csharp"
+    assert maps._label({"c", "d"}, rows[2:], "Hub title") == "csharp"
+    assert maps._label({"a", "c"}, [rows[0], {"path": "c", "tags": "[]"}], "Hub") == "Hub"
 
 
 def test_session_start_hook_prints_the_brief_and_reads_new_repos(
