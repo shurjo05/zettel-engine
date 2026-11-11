@@ -497,3 +497,18 @@ install-time dependency, so the design is ready for a larger vault before it nee
   checks, which compare all notes at once.
 - **Unchanged:** the hooks (no vectors, no extension), keyword search, and where data goes: the
   extension runs locally and sends nothing anywhere.
+
+## 25. A background ingest that does nothing says so (2026-11-11)
+
+On the real PC, 13 captures sat in the inbox for a day. Each `zk process` run started the ingest
+agent, whose zk server didn't start within Claude Code's 30-second limit. The agent said so in the
+log, ended normally, and the run reported success. Nothing told Shurjo.
+
+- **Allow the server two minutes to start.** Headless runs set `MCP_TIMEOUT=120000` unless the
+  person set their own. A cold Python start on Windows, or one racing a `uv sync`, can pass 30 s.
+- **Judge a run by its effect, not its exit code.** After each round, if every capture it was
+  given is still in the inbox, the run stops instead of starting more agents. It logs why and
+  exits with code 1.
+- **Keep the outcome where it will be seen.** `process-status.json` in the zk data folder records
+  the last run, and the weekly review lists it, and says plainly when the last run processed
+  nothing.

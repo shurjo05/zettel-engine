@@ -324,6 +324,13 @@ def cmd_process(args: argparse.Namespace) -> int:
         f"{summary['resolve_runs']} resolve run(s); log {summary['log']}",
         file=sys.stderr,
     )
+    if summary["stalled"]:
+        print(
+            f"zk process: the ingest agent processed none of {len(summary['stalled'])} "
+            "capture(s); see the log",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

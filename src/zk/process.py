@@ -46,6 +46,10 @@ RESOLVE_PROMPT = (
 AGENT_TIMEOUT = 30 * 60
 STALE_LOCK = 2 * 60 * 60  # a lock older than this was left by a run that died
 MAX_ROUNDS = 10
+# Claude Code waits 30 s for an MCP server to start by default. A cold Python start on
+# Windows, or one racing a `uv sync`, can take longer, and the agent then runs without
+# its zk tools, so headless runs allow two minutes (MCP_TIMEOUT, in milliseconds).
+MCP_START_MS = "120000"
 BATCH_CAPTURES = 3  # captures per ingest run, so a backlog is read a few at a time
 BATCH_CHARS = 120_000  # ...and at most this much text per run (one capture always goes)
 
@@ -159,7 +163,7 @@ def _run(command: list[str] | str, vault_dir: Path, log) -> int:
             command,
             shell=isinstance(command, str),
             cwd=vault_dir,
-            env={**os.environ, sessions.INGESTING: "1"},
+            env={"MCP_TIMEOUT": MCP_START_MS, **os.environ, sessions.INGESTING: "1"},
             stdin=subprocess.DEVNULL,
             stdout=log,
             stderr=subprocess.STDOUT,
@@ -176,6 +180,18 @@ def _run(command: list[str] | str, vault_dir: Path, log) -> int:
     return done.returncode
 
 
+def status_path() -> Path:
+    """The last `zk process` run's outcome, for `zk review` and anyone checking by hand."""
+    return data_dir() / "process-status.json"
+
+
+def last_status() -> dict:
+    try:
+        return json.loads(status_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
 def run(
     vault_dir: Path,
     catch_up: bool = False,
@@ -188,7 +204,13 @@ def run(
     now = datetime.now()
     log_path = log_path or data_dir() / "logs" / f"process-{now:%Y-%m-%d-%H%M%S}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    summary = {"log": str(log_path), "caught_up": 0, "ingest_runs": 0, "resolve_runs": 0}
+    summary = {
+        "log": str(log_path),
+        "caught_up": 0,
+        "ingest_runs": 0,
+        "resolve_runs": 0,
+        "stalled": [],
+    }
     with Lock(lock_path()), log_path.open("a", encoding="utf-8") as log:
         log.write(f"zk process {vault_dir} at {now.isoformat(timespec='seconds')}\n")
         if catch_up:
@@ -208,6 +230,16 @@ def run(
             log.write(f"ingest: {len(batch)} of {len(waiting)} capture(s) in the inbox\n")
             _run(_with_captures(commands["ingest"], batch), vault_dir, log)
             summary["ingest_runs"] += 1
+            left = sorted(set(batch) & {c["name"] for c in list_inbox(vault_dir)})
+            if left == sorted(batch):
+                # Not one capture was processed: the agent couldn't work (its zk tools
+                # didn't start, a login expired). Stop rather than spend more runs.
+                summary["stalled"] = left
+                log.write(
+                    f"ingest made no progress: {len(left)} capture(s) still in the inbox; "
+                    "stopping (see the agent's output above)\n"
+                )
+                break
             if list_held(vault_dir):
                 log.write(f"resolve: {len(list_held(vault_dir))} held note(s)\n")
                 _run(commands["resolve"], vault_dir, log)
@@ -225,4 +257,15 @@ def run(
             except Exception as exc:  # maps can wait for the next run; the notes are in
                 log.write(f"maps not updated: {exc}\n")
         log.write(f"done: {summary}\n")
+    status = {
+        "at": now.isoformat(timespec="seconds"),
+        "ok": not summary["stalled"],
+        "stalled": len(summary["stalled"]),
+        "waiting": len(list_inbox(vault_dir)),
+        "log": str(log_path),
+    }
+    try:
+        status_path().write_text(json.dumps(status, indent=2), encoding="utf-8")
+    except OSError:
+        pass
     return summary

@@ -1,6 +1,7 @@
 import io
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -360,11 +361,53 @@ def test_process_ingests_a_backlog_a_few_captures_at_a_time(vault, tmp_path):
             "---\nkind: capture\n---\n# C\n", encoding="utf-8"
         )
     calls = tmp_path / "calls"
-    agent = f"\"{process.sys.executable}\" -c \"open(r'{calls}', 'a').write('{{captures}}\\n')\""
+    script = tmp_path / "agent.py"  # a stand-in agent: records its captures and files them
+    script.write_text(
+        "import os, sys\n"
+        f"open(r'{calls}', 'a').write(sys.argv[1] + chr(10))\n"
+        "os.makedirs('inbox/processed', exist_ok=True)\n"
+        "for n in sys.argv[1].split(', '):\n"
+        "    os.replace('inbox/' + n, 'inbox/processed/' + n)\n"
+        "print(os.environ.get('MCP_TIMEOUT'))\n",
+        encoding="utf-8",
+    )
+    agent = f'"{process.sys.executable}" "{script}" "{{captures}}"'
     summary = process.run(vault, commands={"ingest": agent, "resolve": agent})
     rounds = calls.read_text().splitlines()
-    assert summary["ingest_runs"] == 2 and len(rounds) == 2
+    assert summary["ingest_runs"] == 2 and len(rounds) == 2 and summary["stalled"] == []
     assert rounds[0].split(", ") == [f"2026-11-0{i + 1}-c{i}.md" for i in range(3)]
+    assert process.MCP_START_MS in Path(summary["log"]).read_text()  # MCP servers get time
+    assert process.last_status()["ok"] is True
+
+
+def test_a_run_that_processes_nothing_stops_and_says_so(vault, tmp_path, capsys):
+    for f in (vault / "inbox").glob("*.md"):
+        f.unlink()
+    for i in range(5):
+        (vault / "inbox" / f"2026-11-0{i + 1}-c{i}.md").write_text(
+            "---\nkind: capture\n---\n# C\n", encoding="utf-8"
+        )
+    noop = f'"{process.sys.executable}" -c "print(1)"'  # like an agent whose tools never started
+    summary = process.run(vault, commands={"ingest": noop, "resolve": noop})
+    assert summary["ingest_runs"] == 1 and len(summary["stalled"]) == 3
+    assert "ingest made no progress" in Path(summary["log"]).read_text()
+    status = process.last_status()
+    assert status["ok"] is False and status["waiting"] == 5
+    assert any("processed none of its captures" in line for line in review.advice(
+        {**_review_numbers(), "last_process": status}
+    ))  # fmt: skip
+    from zk.cli import main
+
+    args = ["process", str(vault), "--ingest-command", noop, "--resolve-command", noop]
+    assert main(args) == 1
+    assert "processed none of 3" in capsys.readouterr().err
+
+
+def _review_numbers() -> dict:
+    return {
+        "errors": 0, "broken_links": 0, "held": 0, "inbox": 0, "questions": 50,
+        "maps_pending": 0, "drift": None, "brief_tokens_in_project": 100,
+    }  # fmt: skip
 
 
 def test_batches_stop_at_the_size_limit():
