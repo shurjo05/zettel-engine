@@ -16,7 +16,19 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from zk import capture, checks, evaluate, hooks, lookup, maintain, migrate, process, sessions, vault
+from zk import (
+    agent,
+    capture,
+    checks,
+    evaluate,
+    hooks,
+    lookup,
+    maintain,
+    migrate,
+    process,
+    sessions,
+    vault,
+)
 from zk.embed import DEFAULT_MODEL, FastEmbedder, update_embeddings
 from zk.hook import read_event
 from zk.index import (
@@ -31,6 +43,8 @@ from zk.search import DEFAULT_MODE, MODES, search
 
 # Builds the embedder for --model; tests swap in a stand-in that needs no download.
 make_embedder = FastEmbedder
+# Builds the headless model for answering and judging; tests swap in a stand-in.
+make_ask = agent.claude
 
 
 def _common(parser: argparse.ArgumentParser) -> None:
@@ -453,6 +467,32 @@ def cmd_eval(args: argparse.Namespace) -> int:
     modes = list(dict.fromkeys(args.mode or [DEFAULT_MODE]))
     conn = _open(args)
     embedder = _embedder(args, conn) if set(modes) - {"keyword"} else None
+    if args.answers:
+        from zk.answer import format_answers, run_answers
+
+        picked = (
+            queries[:: max(1, len(queries) // args.limit)][: args.limit] if args.limit else queries
+        )
+        mode = modes[0]
+        embedder = embedder or (_embedder(args, conn) if mode != "keyword" else None)
+        try:
+            report = run_answers(conn, picked, make_ask(args.claude_model), embedder, mode=mode)
+        except agent.AgentError as exc:
+            sys.exit(f"zk eval --answers: {exc}")
+        finally:
+            conn.close()
+        print(json.dumps(report, indent=2) if args.json else format_answers(report))
+        return 0
+    if args.context:
+        from zk.context import format_context, run_context
+
+        found = {m: run_context(conn, queries, m, embedder) for m in modes}
+        conn.close()
+        if args.json:
+            print(json.dumps(found if len(modes) > 1 else found[modes[0]], indent=2))
+        else:
+            print("\n\n".join(f"== {m} ==\n{format_context(r)}" for m, r in found.items()))
+        return 0
     reports = {
         m: evaluate.run_eval(conn, queries, depth=10, mode=m, embedder=embedder) for m in modes
     }
@@ -469,6 +509,50 @@ def cmd_eval(args: argparse.Namespace) -> int:
         print(json.dumps(out if len(modes) > 1 else out[modes[0]], indent=2))
     else:
         print("\n\n".join(f"== {m} ==\n{evaluate.format_report(r)}" for m, r in reports.items()))
+    return 0
+
+
+def cmd_ask(args: argparse.Namespace) -> int:
+    """Answer one question from the notes (sends it and the top notes to Anthropic)."""
+    from zk.answer import ask
+
+    conn = _open(args)
+    embedder = _embedder(args, conn)
+    try:
+        answer = ask(conn, args.question, make_ask(args.claude_model), embedder, k=args.k)
+    except agent.AgentError as exc:
+        sys.exit(f"zk ask: {exc}")
+    finally:
+        conn.close()
+    print(answer.text)
+    print(
+        f"\n(from {', '.join(answer.given) or 'no notes'}; {answer.context_tokens} tokens)",
+        file=sys.stderr,
+    )
+    if not answer.grounded:
+        print("zk ask: warning, it cited notes it wasn't given", file=sys.stderr)
+    return 0
+
+
+def cmd_calibrate(args: argparse.Namespace) -> int:
+    """Judge note pairs near each similarity cut and report precision per band."""
+    from zk import calibrate
+
+    conn = _open(args)
+    embedder = _embedder(args, conn)
+    try:
+        result = calibrate.run(
+            args.vault,
+            conn,
+            embedder,
+            None if args.no_judge else make_ask(args.claude_model),
+            per_band=args.per_band,
+        )
+    except agent.AgentError as exc:
+        sys.exit(f"zk calibrate: {exc}")
+    finally:
+        conn.close()
+    print(json.dumps(result, indent=2) if args.json else calibrate.format_calibration(result))
     return 0
 
 
@@ -588,8 +672,46 @@ def main(argv: list[str] | None = None) -> int:
         "--mode", action="append", choices=MODES, help="search mode to evaluate (repeatable)"
     )
     _model_option(p_eval)
+    p_eval.add_argument(
+        "--context",
+        action="store_true",
+        help="measure context tokens per question (zk tools vs naive RAG vs the whole vault)",
+    )
+    p_eval.add_argument(
+        "--answers",
+        action="store_true",
+        help="answer questions from the notes with headless Claude and score the citations "
+        "(sends the questions and retrieved notes to Anthropic)",
+    )
+    p_eval.add_argument(
+        "--limit", type=int, default=20, help="--answers: questions to ask, spread evenly (0 = all)"
+    )
+    p_eval.add_argument("--claude-model", help="--answers: Claude model (default: your default)")
     p_eval.add_argument("--json", action="store_true", help="machine-readable output")
     p_eval.set_defaults(func=cmd_eval)
+
+    p_ask = sub.add_parser("ask", help="answer a question from the notes, citing them")
+    _common(p_ask)
+    _model_option(p_ask)
+    p_ask.add_argument("question")
+    p_ask.add_argument("-k", type=int, default=5, help="notes to give the model (default 5)")
+    p_ask.add_argument("--claude-model", help="Claude model (default: your default)")
+    p_ask.set_defaults(func=cmd_ask)
+
+    p_cal = sub.add_parser(
+        "calibrate", help="re-check the similarity thresholds on pairs judged by Claude"
+    )
+    _common(p_cal)
+    _model_option(p_cal)
+    p_cal.add_argument(
+        "--per-band", type=int, default=6, help="pairs per band on each side of a cut (default 6)"
+    )
+    p_cal.add_argument("--claude-model", help="Claude model for judging (default: your default)")
+    p_cal.add_argument(
+        "--no-judge", action="store_true", help="only reuse saved labels; send nothing"
+    )
+    p_cal.add_argument("--json", action="store_true", help="machine-readable output")
+    p_cal.set_defaults(func=cmd_calibrate)
 
     p_capture = sub.add_parser("capture", help="save a session or text into the vault inbox")
     p_capture.add_argument("vault", type=Path, help="path to the vault folder")

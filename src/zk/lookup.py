@@ -65,6 +65,11 @@ def _brief(row: sqlite3.Row) -> dict:
     return {"path": row["path"], "id": row["id"], "title": row["title"], "type": row["type"]}
 
 
+def compact(value: object) -> str:
+    """JSON without indentation, as the MCP tools return it: every character costs context."""
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
 def get_note(conn: sqlite3.Connection, name: str, max_chars: int = MAX_BODY_CHARS) -> dict:
     """One note in full, with the titles of the notes it links to and from."""
     path = resolve(conn, name)
