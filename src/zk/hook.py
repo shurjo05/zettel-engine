@@ -1,16 +1,25 @@
-"""The session-end hook: `python -m zk.hook VAULT [--process]`.
+"""zk's Claude Code hooks: `python -m zk.hook VAULT [--process]`.
 
-Claude Code runs this when a session ends, with the event as JSON on
-stdin. It captures the session into the inbox and, with --process, starts
-`zk process` in the background to turn the inbox into notes. Agents give
-session-end hooks one to a few seconds, so this imports only what capturing
-needs, and it never fails: any problem is reported on stderr with exit code 0.
+Claude Code runs this with the event as JSON on stdin, and the event's
+hook_event_name says which hook it is:
+- SessionEnd captures the session into the inbox and, with --process, starts
+  `zk process` in the background to turn the inbox into notes.
+- SessionStart prints the vault brief (recall.brief) as context, and starts
+  `zk learn` in the background when the session is in a repository zk hasn't read.
+- PreToolUse on Grep or Glob prints a one-line nudge, once per session.
+- PostToolUseFailure on a shell command prints notes that clearly match the error.
+- UserPromptSubmit prints pointers to notes that clearly match the prompt, if any.
+
+Hooks run on every session and failed command, so this imports only what the
+event needs (never numpy), and it never fails: problems go to stderr, exit code 0.
+zk's own headless runs (ZK_INGESTING) get no brief, nudge or notes.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -21,26 +30,98 @@ def read_event() -> dict:
     PowerShell pipes add a BOM, which `json.load(sys.stdin)` rejects.
     """
     data = sys.stdin.buffer.read() if hasattr(sys.stdin, "buffer") else sys.stdin.read()
-    return json.loads(
-        data.decode("utf-8-sig") if isinstance(data, bytes) else data.lstrip("\ufeff")
-    )
+    text = data.decode("utf-8-sig") if isinstance(data, bytes) else data.lstrip("\ufeff")
+    return json.loads(text)
+
+
+def _context(event_name: str, text: str | None) -> None:
+    if text:
+        out = {"hookSpecificOutput": {"hookEventName": event_name, "additionalContext": text}}
+        print(json.dumps(out, ensure_ascii=False))
+
+
+def session_end(vault_dir: Path, event: dict, process: bool) -> None:
+    from zk import sessions
+
+    saved, why = sessions.from_hook(vault_dir, event)
+    print(f"zk hook: {'saved ' + saved if saved else 'skipped'} ({why})", file=sys.stderr)
+    if saved and process:
+        sessions.start_process(vault_dir)
+
+
+def session_start(vault_dir: Path, event: dict) -> None:
+    from zk import learn, recall
+
+    recall.clear_old_state()
+    conn = recall.open_index(vault_dir)
+    if conn is not None:
+        try:
+            _context("SessionStart", recall.brief(conn, event.get("cwd")))
+        finally:
+            conn.close()
+    root = recall.project_root(event.get("cwd"))
+    if (
+        event.get("source", "startup") == "startup"
+        and root is not None
+        and root.resolve() != vault_dir.resolve()
+        and not learn.is_known(root)
+    ):
+        learn.start(vault_dir, root)
+
+
+def pre_tool(event: dict) -> None:
+    from zk import recall
+
+    _context("PreToolUse", recall.nudge(event))
+
+
+def tool_failed(vault_dir: Path, event: dict) -> None:
+    from zk import recall
+
+    conn = recall.open_index(vault_dir)
+    if conn is None:
+        return
+    try:
+        _context("PostToolUseFailure", recall.on_failure(conn, event))
+    finally:
+        conn.close()
+
+
+def prompt_submitted(vault_dir: Path, event: dict) -> None:
+    from zk import recall
+
+    conn = recall.open_index(vault_dir)
+    if conn is None:
+        return
+    try:
+        _context("UserPromptSubmit", recall.on_prompt(conn, event))
+    finally:
+        conn.close()
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m zk.hook")
     parser.add_argument("vault", type=Path)
     parser.add_argument(
-        "--process", action="store_true", help="then start `zk process` in the background"
+        "--process", action="store_true", help="at session end, start `zk process` too"
     )
     args = parser.parse_args(argv)
     try:
-        from zk import sessions
-
-        saved, why = sessions.from_hook(args.vault, read_event())
-        print(f"zk hook: {'saved ' + saved if saved else 'skipped'} ({why})", file=sys.stderr)
-        if saved and args.process:
-            sessions.start_process(args.vault)
-    except Exception as exc:  # a broken capture must never break the agent that ran the hook
+        event = read_event()
+        name = event.get("hook_event_name") or "SessionEnd"
+        if name == "SessionEnd":
+            session_end(args.vault, event, args.process)
+        elif os.environ.get("ZK_INGESTING"):
+            pass  # zk's own headless runs: no brief, nudge or notes
+        elif name == "SessionStart":
+            session_start(args.vault, event)
+        elif name == "PreToolUse":
+            pre_tool(event)
+        elif name == "PostToolUseFailure":
+            tool_failed(args.vault, event)
+        elif name == "UserPromptSubmit":
+            prompt_submitted(args.vault, event)
+    except Exception as exc:  # a broken hook must never break the agent that ran it
         print(f"zk hook: failed: {exc}", file=sys.stderr)
     return 0
 

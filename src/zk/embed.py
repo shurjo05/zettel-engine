@@ -97,7 +97,8 @@ def update_embeddings(
         )
     }
     todo: dict[str, str] = {}  # content_hash -> text; identical files share one vector
-    for row in conn.execute("SELECT content_hash, title, body FROM notes"):
+    # Map notes only list other notes; a vector for them would make them everyone's neighbour.
+    for row in conn.execute("SELECT content_hash, title, body FROM notes WHERE type IS NOT 'map'"):
         if row["content_hash"] in have or row["content_hash"] in todo:
             stats.reused += 1
         else:

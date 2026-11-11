@@ -395,3 +395,72 @@ answer cited a relevant note and only notes it was given. Calibration judged 33 
 parent hold up (6/6 and 5/6 above their cuts), and the duplicate cut had 0 of 3 pairs above it
 judged the same idea, which matches the resolver releasing 3 of its 6 holds. That is the cut to
 watch; it stays at 0.85 until more pairs are judged.
+
+## 23. Notes reach Claude without being asked, cheapest first (2026-11-10)
+
+Until M11, notes reached Claude only when it chose to call `search_notes`, and nothing told a
+session what the vault held or when it was worth searching. Shurjo wanted the vault to stand in
+for expensive research while coding (school style, past projects, errors already solved) and to
+save tokens overall. The design was worked out with Shurjo in the project chat, after comparing
+memento-vault, superbrain, graphify, everything-claude-code and ruflo.
+
+- **Three levels, each loaded only when needed.** Every session gets map names (a capped list);
+  a map is opened when its topic comes up; a note only when it's needed. Loading the clusters'
+  notes themselves would have cost about 24,000 tokens a session on the real vault, and a list of
+  every title grows with every note. Map names grow with topics, not notes.
+- **Map notes are generated and kept up to date automatically**, with no review step (Shurjo's
+  choice): after each run that changed the vault. To keep that safe they live in their own folder,
+  keep their name while a topic keeps half its notes (Jaccard 0.5), are never rewritten once
+  edited by hand (each map records the hash of the body zk wrote), and are retired by a move,
+  never deleted. They're excluded from search, clustering, embeddings and the orphan count, so
+  they don't distort retrieval or the health checks.
+- **Topics from clusters, projects from sources.** Topic maps reuse M9's mutual-nearest-neighbour
+  clusters. Projects are a second axis, read from `project:<name>` sources, which ingest now adds
+  from the capture's repository and which a merge carries over. Patterns and decisions from a
+  single project stay in its map until they hold for two projects (everything-claude-code's
+  promotion rule), so one project's habits don't read as general practice.
+- **One project, many spellings** (found in the dry run on the real vault). Older notes name their
+  project as `local-repo:<folder>/<path>` and `zk learn` as `repo:<folder>`, so all three kinds
+  count. Names that differ only in punctuation (`AphidDetection`, `aphid-detection`) or by words
+  added at the end (`ruflo`, `ruflo-claude-flow`; `nautilustrx`, `nautilustrx-shurjo05` from
+  GitHub Classroom) are one project with one map, named after the shortest, and the others kept as
+  its aliases. The session's folder is matched the same way. The cost is that an unrelated
+  `chat` and `chat-app` would share a map; for one person's projects that's rare, and visible.
+- **Topic labels only from tags most notes carry** (two thirds), else the most central note's
+  title. A cluster of five C# notes, three on xUnit, was labelled "testing" though two weren't.
+- **Project notes in the brief are cut to 100 characters each.** In a project's folder the brief
+  lists up to 12 of its notes; at full length that took a 10-note project from about 160 to about
+  700 tokens. The title and the start of the summary are enough to decide whether to open one.
+  The weekly review now reports the largest brief any project's folder gets, not just the plain one.
+- **Push only where it's cheap and likely to help.** A session-start brief (target under 1,000
+  tokens), a one-line nudge the first time a session greps or globs (graphify's idea), and notes
+  for a failed shell command only when most of their words match the error, once per session.
+  Static "when to search" rules go in `~/.claude/rules/zk.md`, which loads in every project and
+  writes nothing into the person's repositories.
+- **Pointers on every prompt, but only when confident** (Shurjo, 2026-11-11). This was first
+  deferred because it runs on every message. Shurjo asked for it once the Claude and Codex
+  token-sharing work made cheap recall more valuable. A UserPromptSubmit hook runs BM25 on the
+  prompt's uncommon words and keeps a note only if it shares three of them (both for a
+  two-word prompt; a quarter for long prompts), at most three notes and 1,200 characters, each
+  note once per session. Measured on the legacy copy, the 30 test questions and 20 everyday
+  prompts unrelated to the vault (commit messages, CSS, an essay) gave these results:
+  - a two-word floor: 25 of 30 questions fired with a right note in 24, and 3 of the 20 everyday
+    prompts fired ("write a commit message" pointed to a note on pinning git commits);
+  - a three-word floor: 19 of 30 fired, all with a right note, and none of the 20 everyday prompts.
+  The three-word floor was kept, for precision over recall again. A pointer averages about 60
+  tokens and the hook takes about 85 ms on Linux, with no numpy.
+- **Hook text is written as facts, not instructions**, as Claude Code's hook documentation
+  advises, so it reads as context rather than as an injected command.
+- **Reading past projects is two passes, and the second is free of extra calls** (graphify's
+  idea). `zk learn` reads structure with no model: tree, README, manifests, commit subjects, and
+  declared names (Python's syntax tree; declaration keywords elsewhere). It never reads dependency
+  folders or likely secret files, sends no code bodies, and remembers file hashes so a later run
+  reads only what changed. The model pass is the ordinary ingest of the resulting capture.
+- **Everyday sessions get a read-only server.** The write tools and their instructions cost
+  tokens in every session and let any session write notes. zk's headless runs now bring their own
+  write-enabled server through `--mcp-config` with `--strict-mcp-config`.
+- **Backlogs are ingested a few captures at a time**, oldest first, so 18 waiting sessions (about
+  440,000 tokens) never land in one agent's context.
+- **A weekly review, not a daily one** (Shurjo): health, retrieval on the test questions, map
+  changes pending, hold drift and the brief's size, with no model. It runs Fridays at 12:00 by
+  default, inside the 9:00 to 15:00 window when Shurjo's tools are usually open.

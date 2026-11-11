@@ -184,7 +184,14 @@ def cmd_search(args: argparse.Namespace) -> int:
     conn = _open(args)
     embedder = _embedder(args, conn) if args.mode != "keyword" else None
     hits = search(
-        conn, args.query, k=args.k, type=args.type, tag=args.tag, mode=args.mode, embedder=embedder
+        conn,
+        args.query,
+        k=args.k,
+        type=args.type,
+        tag=args.tag,
+        mode=args.mode,
+        embedder=embedder,
+        project=args.project,
     )
     conn.close()
     if args.json:
@@ -302,7 +309,7 @@ def cmd_process(args: argparse.Namespace) -> int:
     """Ingest the inbox and resolve held notes with headless agents, when there is work."""
     if not args.vault.is_dir():
         sys.exit(f"zk: {args.vault} is not a folder")
-    commands = process.default_commands(args.resolve_model)
+    commands = process.default_commands(args.resolve_model, args.vault)
     if args.ingest_command:
         commands["ingest"] = args.ingest_command
     if args.resolve_command:
@@ -321,25 +328,28 @@ def cmd_process(args: argparse.Namespace) -> int:
 
 
 def cmd_hooks(args: argparse.Namespace) -> int:
-    """Install or show zk's Claude Code session-end hook."""
+    """Install or show zk's Claude Code hooks and rules file."""
     if args.action == "status":
         return _hooks_status(args.vault)
     if args.vault is None or not args.vault.is_dir():
         sys.exit("zk hooks install: give the vault folder")
     try:
-        result = hooks.install(args.vault, not args.no_process, args.dry_run)
+        result = hooks.install(args.vault, not args.no_process, args.dry_run, not args.no_recall)
     except ValueError as exc:
         print(f"zk hooks: {exc}", file=sys.stderr)
         return 1
     print(f"claude: {result['action']} in {result['path']}")
+    for event in result["added"]:
+        print(f"  {'would add' if args.dry_run else 'added'} the {event} hook")
+    for event in result["existing"]:
+        print(f"  {event}: zk's hook is already there")
+    if result.get("rules"):
+        print(f"  {'would add' if args.dry_run else 'added'} the rules file {result['rules']}")
     if args.dry_run and result.get("diff"):
         print(result["diff"])
     if result.get("backup"):
         print(f"  backup: {result['backup']}")
-    for command in result["commands"]:
-        print(f"  {command}")
-    if not args.no_process:
-        _warn_if_no_server(args.vault)
+    _warn_if_no_server(args.vault)
     return 0
 
 
@@ -347,16 +357,19 @@ def _hooks_status(vault_dir: Path | None) -> int:
     try:
         found = hooks.installed()
     except ValueError as exc:
-        found, note = [], str(exc)
+        found, note = {}, str(exc)
     else:
         note = "installed" if found else "not installed"
-    print(f"claude hook: {note} ({hooks.settings_path()})")
-    for command in found:
-        print(f"  {command}")
-    task = hooks.schedule_status()
-    print(f"scheduled catch-up: {'installed' if task else 'not installed'}")
+    print(f"claude hooks: {note} ({hooks.settings_path()})")
+    for event, commands in found.items():
+        for command in commands:
+            print(f"  {event}: {command}")
+    rules = hooks.rules_path()
+    print(f"rules file: {'installed' if rules.exists() else 'not installed'} ({rules})")
+    for name, label in ((hooks.TASK_NAME, "daily catch-up"), (hooks.REVIEW_TASK, "weekly review")):
+        print(f"{label}: {'installed' if hooks.schedule_status(name) else 'not installed'}")
     ready, detail = hooks.server_ready()
-    print(f"zk server for headless runs: {detail}")
+    print(f"zk server for everyday sessions: {detail}")
     record = sessions.load_record()
     captures = sorted(
         (v.get("checked", ""), v["capture"]) for v in record.values() if v.get("capture")
@@ -382,15 +395,17 @@ def _hooks_status(vault_dir: Path | None) -> int:
 def _warn_if_no_server(vault_dir: Path) -> None:
     ready, detail = hooks.server_ready()
     if ready is False:
-        print(f"  warning: {detail}. Until it is, zk process can't write notes. Register it with:")
+        print(f"  warning: {detail}. Register a read-only one for everyday sessions with:")
+        if "--allow-writes" in detail:
+            print("  claude mcp remove zk --scope user")
         print(f"  {hooks.server_command(vault_dir)}")
 
 
 def cmd_schedule(args: argparse.Namespace) -> int:
     """Install, show or remove the daily catch-up task (Windows Task Scheduler)."""
     if args.action == "status":
-        task = hooks.schedule_status()
-        print(task or "zk schedule: not installed")
+        for name in (hooks.TASK_NAME, hooks.REVIEW_TASK):
+            print(hooks.schedule_status(name) or f"zk schedule: {name!r} not installed")
         return 0
     if args.action == "remove":
         removed = hooks.remove_schedule()
@@ -400,15 +415,93 @@ def cmd_schedule(args: argparse.Namespace) -> int:
         sys.exit("zk schedule install: give the vault folder")
     if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", args.at):
         sys.exit("zk schedule install: --at takes a time like 21:00")
-    _warn_if_no_server(args.vault)
-    result = hooks.install_schedule(args.vault, args.at, data_dir(), args.dry_run)
+    if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", args.review_at):
+        sys.exit("zk schedule install: --review-at takes a time like 20:00")
+    review_on = None if args.review_day == "never" else args.review_day
+    result = hooks.install_schedule(
+        args.vault, args.at, data_dir(), args.dry_run, review_on, args.review_at
+    )
     if result["action"] == "added":
         print(f"zk schedule: added the task {result['task']!r}, daily at {result['at']}")
+        if result["review"]:
+            print(f"zk schedule: added the task {hooks.REVIEW_TASK!r}, {result['review']}")
     elif result["action"] == "would add":
         print(result["xml"])
     else:
         print("zk schedule: Task Scheduler is Windows only. A cron line that does the same:")
         print(result["cron"])
+    return 0
+
+
+def cmd_maps(args: argparse.Namespace) -> int:
+    """Write map notes for clusters and projects; rewrite them when their notes change."""
+    from zk import maps
+
+    conn = _open(args)
+    embedder = _embedder(args, conn)
+    try:
+        result = maps.update(args.vault, conn, embedder, dry_run=args.dry_run)
+        if not args.dry_run:
+            build_index(conn, args.vault, (*DEFAULT_EXCLUDES, *args.exclude))
+    finally:
+        conn.close()
+    print(maps.format_update(result))
+    return 0
+
+
+def cmd_brief(args: argparse.Namespace) -> int:
+    """Print the session-start brief, and roughly what it costs."""
+    from zk import recall
+
+    conn = _open(args)
+    try:
+        text = recall.brief(conn, args.cwd)
+    finally:
+        conn.close()
+    print(text or "(nothing: the vault has no notes)")
+    print(f"\nabout {checks.estimate_tokens(text)} tokens", file=sys.stderr)
+    return 0
+
+
+def cmd_learn(args: argparse.Namespace) -> int:
+    """Read each project's structure into an inbox capture, for the next ingest."""
+    from zk import learn
+
+    if not args.vault.is_dir():
+        sys.exit(f"zk: {args.vault} is not a folder")
+    for folder in args.folders:
+        if args.skip:
+            learn.skip(folder)
+            print(f"zk learn: {folder} will not be read", file=sys.stderr)
+            continue
+        try:
+            result = learn.learn(args.vault, folder, dry_run=args.dry_run)
+        except FileNotFoundError as exc:
+            print(f"zk learn: {exc}", file=sys.stderr)
+            continue
+        if args.dry_run and result.get("text"):
+            print(result["text"])
+        print(
+            f"zk learn: {result['project']}: {result['saved'] or 'nothing saved'} "
+            f"({result['why']})",
+            file=sys.stderr,
+        )
+    return 0
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    """The health review: write it to inbox/reports/ (or just print it)."""
+    from zk import review
+
+    conn = _open(args)
+    embedder = _embedder(args, conn)
+    try:
+        result = review.run(args.vault, conn, embedder, write=not args.print)
+    finally:
+        conn.close()
+    print(result["text"])
+    if result.get("file"):
+        print(f"zk review: saved {result['file']}", file=sys.stderr)
     return 0
 
 
@@ -651,6 +744,7 @@ def main(argv: list[str] | None = None) -> int:
     p_search.add_argument("-k", type=int, default=5, help="number of results (default 5)")
     p_search.add_argument("--type", help="only notes of this type")
     p_search.add_argument("--tag", help="only notes with this tag")
+    p_search.add_argument("--project", help="only notes recorded from this project")
     p_search.add_argument("--json", action="store_true", help="machine-readable output")
     p_search.set_defaults(func=cmd_search)
 
@@ -759,7 +853,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_process.set_defaults(func=cmd_process)
 
-    p_hooks = sub.add_parser("hooks", help="install or show the Claude Code session-end hook")
+    p_hooks = sub.add_parser("hooks", help="install or show zk's Claude Code hooks")
     p_hooks.add_argument("action", choices=["install", "status"])
     p_hooks.add_argument("vault", type=Path, nargs="?", help="path to the vault folder")
     p_hooks.add_argument(
@@ -767,15 +861,59 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="only capture; don't start `zk process` after each session",
     )
+    p_hooks.add_argument(
+        "--no-recall",
+        action="store_true",
+        help="only the session-end capture: no brief, nudge, error notes or rules file",
+    )
     p_hooks.add_argument("--dry-run", action="store_true", help="show the change, make none")
     p_hooks.set_defaults(func=cmd_hooks)
 
-    p_schedule = sub.add_parser("schedule", help="the daily catch-up task (Windows)")
+    p_schedule = sub.add_parser(
+        "schedule", help="the daily catch-up and weekly review tasks (Windows)"
+    )
     p_schedule.add_argument("action", choices=["install", "status", "remove"])
     p_schedule.add_argument("vault", type=Path, nargs="?", help="path to the vault folder")
     p_schedule.add_argument("--at", default="21:00", help="time of day, HH:MM (default 21:00)")
+    p_schedule.add_argument(
+        "--review-day",
+        default="fri",
+        choices=[*hooks.DAYS, "never"],
+        help="day of the weekly health review (default fri; never: no review task)",
+    )
+    p_schedule.add_argument(
+        "--review-at", default="12:00", help="time of the weekly review, HH:MM (default 12:00)"
+    )
     p_schedule.add_argument("--dry-run", action="store_true", help="print the task, add nothing")
     p_schedule.set_defaults(func=cmd_schedule)
+
+    p_maps = sub.add_parser("maps", help="write or update the map notes for topics and projects")
+    _common(p_maps)
+    _model_option(p_maps)
+    p_maps.add_argument("--dry-run", action="store_true", help="list the changes, write nothing")
+    p_maps.set_defaults(func=cmd_maps)
+
+    p_brief = sub.add_parser("brief", help="print what a session is told about the vault")
+    _common(p_brief)
+    p_brief.add_argument("--cwd", type=Path, help="as if the session started in this folder")
+    p_brief.set_defaults(func=cmd_brief)
+
+    p_learn = sub.add_parser(
+        "learn", help="read a project's structure into an inbox capture (no model)"
+    )
+    p_learn.add_argument("vault", type=Path, help="path to the vault folder")
+    p_learn.add_argument("folders", type=Path, nargs="+", help="project folders to read")
+    p_learn.add_argument("--dry-run", action="store_true", help="print the capture, save nothing")
+    p_learn.add_argument(
+        "--skip", action="store_true", help="never read these projects (also not automatically)"
+    )
+    p_learn.set_defaults(func=cmd_learn)
+
+    p_review = sub.add_parser("review", help="the vault health review (no model)")
+    _common(p_review)
+    _model_option(p_review)
+    p_review.add_argument("--print", action="store_true", help="print it, write no report")
+    p_review.set_defaults(func=cmd_review)
 
     p_import = sub.add_parser("import", help="import a legacy vault's notes (reads it only)")
     p_import.add_argument(

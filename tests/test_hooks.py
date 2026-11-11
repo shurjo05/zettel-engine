@@ -46,7 +46,7 @@ def test_install_without_processing_and_status(vault, isolated_homes, capsys):
     assert entry["timeout"] == 10 and not entry["command"].endswith("--process")
     assert main(["hooks", "status", str(vault)]) == 0
     out = capsys.readouterr().out
-    assert "claude hook: installed" in out and "codex" not in out
+    assert "SessionEnd: " in out and "codex" not in out
 
 
 def test_install_refuses_a_settings_file_it_cannot_read(vault, isolated_homes):
@@ -133,17 +133,23 @@ def test_only_one_process_runs_at_a_time(vault, capsys):
     assert not process.lock_path().exists()
 
 
-def test_default_agents_are_marked_and_limited_to_zk_tools():
-    commands = process.default_commands("opus")
+def test_default_agents_are_marked_and_bring_their_own_write_server(vault):
+    commands = process.default_commands("opus", vault)
     assert commands["ingest"][2].startswith("[zk]") and "mcp__zk" in commands["ingest"]
     assert commands["resolve"][-2:] == ["--model", "opus"]
+    assert "--strict-mcp-config" in commands["ingest"]
+    config_file = commands["ingest"][commands["ingest"].index("--mcp-config") + 1]
+    config = json.loads(open(config_file).read())
+    assert config["mcpServers"]["zk"]["args"][-1] == "--allow-writes"
 
 
-def test_installs_warn_when_headless_runs_have_no_zk_server(vault, monkeypatch, capsys):
+def test_installs_warn_when_sessions_have_no_read_only_zk_server(vault, monkeypatch, capsys):
     monkeypatch.setattr(hooks, "server_ready", lambda: (False, "no MCP server named zk"))
     assert main(["hooks", "install", str(vault), "--dry-run"]) == 0
     out = capsys.readouterr().out
     assert "warning: no MCP server named zk" in out
-    assert "claude mcp add zk --scope user --" in out and "--allow-writes" in out
-    assert main(["hooks", "install", str(vault), "--no-process", "--dry-run"]) == 0
+    # Everyday sessions get a read-only server; zk's own runs bring a write-enabled one.
+    assert "claude mcp add zk --scope user --" in out and "--allow-writes" not in out
+    monkeypatch.setattr(hooks, "server_ready", lambda: (True, "registered read-only"))
+    assert main(["hooks", "install", str(vault), "--dry-run"]) == 0
     assert "warning" not in capsys.readouterr().out

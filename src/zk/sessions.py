@@ -57,8 +57,24 @@ def _head(path: Path, n: int = 50) -> list[str]:
 def describe(path: Path, session_id: str | None = None, cwd: str | None = None) -> Session:
     """A Claude Code transcript's session id and project."""
     cwd = cwd or capture.claude_cwd(_head(path))
-    project = Path(cwd).name if cwd else None
-    return Session("claude", path, _clean_id(str(session_id or path.stem)), project or None)
+    return Session("claude", path, _clean_id(str(session_id or path.stem)), _project(cwd))
+
+
+def _project(cwd: str | None) -> str | None:
+    """The repository a session ran in, by its folder name.
+
+    A folder that exists but isn't in a repository (a home folder, say) is no
+    project. One that's gone keeps its own name, as the best guess there is.
+    """
+    if not cwd:
+        return None
+    here = Path(cwd)
+    if not here.exists():
+        return here.name or None
+    for folder in (here, *here.parents):
+        if (folder / ".git").exists():
+            return folder.name or None
+    return None
 
 
 def transcripts(days: float, now: float | None = None) -> list[Path]:

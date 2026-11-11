@@ -116,8 +116,9 @@ def orphan_report(
     orphans = [
         r["path"]
         for r in conn.execute(
-            "SELECT path FROM notes n WHERE NOT EXISTS ("
+            "SELECT path FROM notes n WHERE type IS NOT 'map' AND NOT EXISTS ("
             "  SELECT 1 FROM links l WHERE l.dst_path = n.path AND l.src_path != n.path"
+            "  AND l.src_path NOT IN (SELECT path FROM notes WHERE type = 'map')"
             ") ORDER BY path"
         )
     ]
@@ -131,6 +132,7 @@ def clusters(
     at: float = CLUSTER_AT,
     min_size: int = MIN_CLUSTER,
     split_over: int = SPLIT_OVER,
+    skip: frozenset[str] | set[str] = frozenset(),
 ) -> list[dict]:
     """Groups of closely related notes: connected components of the mutual k-nearest graph.
 
@@ -138,11 +140,14 @@ def clusters(
     least `at` similar. Requiring both directions stops one broad note from
     chaining unrelated topics together, the usual failure of threshold clustering.
     A component over `split_over` notes still mixed topics on real notes, so it is
-    split again with a stricter threshold. Each cluster names the member closest
-    to being its map (the one linking to most others) and says whether it
-    already is one, and which tags its members share.
+    split again with a stricter threshold. Notes in `skip` are left out. Each
+    cluster names the member closest to being its map (the one linking to most
+    others) and says whether it already is one, and which tags its members share.
     """
     rows, matrix = _notes(conn, embedder)
+    if skip:  # notes kept out of the clustering, such as ones scoped to a single project
+        keep = [i for i, r in enumerate(rows) if r["path"] not in skip]
+        rows, matrix = [rows[i] for i in keep], matrix[keep]
     n = len(rows)
     if n < min_size:
         return []

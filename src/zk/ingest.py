@@ -32,7 +32,7 @@ from zk.proposals import (
     slugify,
     verdict,
 )
-from zk.search import similar_notes, similar_to_vector
+from zk.search import project_slug, similar_notes, similar_to_vector
 
 INBOX = "inbox"
 PROCESSED = "inbox/processed"
@@ -144,10 +144,14 @@ def ingest(
     now = now or datetime.now().astimezone()
     if not drafts:
         raise InvalidProposal("no notes given; to retire a capture with nothing in it, discard it")
+    project = None
     if capture:
         capture = _check_name(capture)
         if not (vault_dir / INBOX / capture).is_file():
             raise FileNotFoundError(f"no capture named {capture!r} in the inbox")
+        raw = (vault_dir / INBOX / capture).read_text(encoding="utf-8", errors="replace")
+        named = _front(raw).get("project")
+        project = project_slug(str(named)) if named else None
 
     _link_drafts(vault_dir, drafts)
     rendered, problems, taken = [], [], set()
@@ -157,6 +161,8 @@ def ingest(
             problems.append(f"note {i}: give one to {MAX_QUESTIONS} test questions it answers")
         if capture:
             draft.sources = [*draft.sources, f"capture:{capture}"]
+        if project and not any(s.lower().startswith("project:") for s in draft.sources):
+            draft.sources = [*draft.sources, f"project:{project}"]
         try:
             name, text = render(draft, _unique_id(conn, now, taken))
         except InvalidProposal as exc:

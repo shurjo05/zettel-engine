@@ -94,3 +94,14 @@ def no_real_claude(monkeypatch):
         return ask
 
     monkeypatch.setattr(cli, "make_ask", refuse)
+
+
+@pytest.fixture(autouse=True)
+def no_background_work(monkeypatch):
+    """Tests never load a real embedding model for maps, or start a detached zk learn."""
+    from zk import learn, process
+
+    started = []
+    monkeypatch.setattr(process, "refresh_maps", lambda vault_dir, log: None)
+    monkeypatch.setattr(learn, "start", lambda vault_dir, root: started.append(root))
+    return started
