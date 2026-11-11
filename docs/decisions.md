@@ -500,15 +500,28 @@ install-time dependency, so the design is ready for a larger vault before it nee
 
 ## 25. A background ingest that does nothing says so (2026-11-11)
 
-On the real PC, 13 captures sat in the inbox for a day. Each `zk process` run started the ingest
-agent, whose zk server didn't start within Claude Code's 30-second limit. The agent said so in the
-log, ended normally, and the run reported success. Nothing told Shurjo.
+On the real PC, captures sat in the inbox for a day while every `zk process` run reported success.
+The logs show three different failures:
+- once, the ingest agent's zk server didn't start within Claude Code's 30-second limit;
+- twice, the run stopped partway, with no output after the agent started;
+- once, the agent read 12 captures, called them all "coursework" with nothing worth keeping (only
+  4 were), and set none of them aside.
 
-- **Allow the server two minutes to start.** Headless runs set `MCP_TIMEOUT=120000` unless the
-  person set their own. A cold Python start on Windows, or one racing a `uv sync`, can pass 30 s.
-- **Judge a run by its effect, not its exit code.** After each round, if every capture it was
-  given is still in the inbox, the run stops instead of starting more agents. It logs why and
-  exits with code 1.
-- **Keep the outcome where it will be seen.** `process-status.json` in the zk data folder records
-  the last run, and the weekly review lists it, and says plainly when the last run processed
-  nothing.
+The server normally starts in about 3 seconds, so the timeout was probably a one-off (another
+`zk process` or a `uv sync` running at the same time). That's unconfirmed. The runs that stopped
+are thought to have been killed with the session that started them, which is also unconfirmed.
+The common fault was that zk judged a run by the agent's exit code.
+
+- **Judge a run by its effect.** After each round, if every capture it was given is still in the
+  inbox, the run stops instead of starting more agents. It logs why and exits with code 1.
+- **Record the outcome where it will be seen.** `process-status.json` in the zk data folder is
+  written when a run starts (not finished) and again when it ends. The weekly review reports a run
+  that processed nothing, and a run that never finished.
+- **Every capture must end somewhere.** The ingest prompt says to read each capture in full and end
+  it in `ingest_notes` or `discard`. The server's instructions say school work is worth keeping
+  when it shows a class's style rules, a concept or a mistake, which was Shurjo's own use case.
+- **Detach properly on Windows.** The background run also breaks away from the app's job object
+  (`CREATE_BREAKAWAY_FROM_JOB`, falling back when the job forbids it), so closing the session
+  can't end it.
+- **Allow the server two minutes to start** (`MCP_TIMEOUT=120000` unless already set), which is
+  cheap insurance.

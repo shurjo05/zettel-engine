@@ -37,7 +37,9 @@ from zk.ingest import list_held, list_inbox
 CAPTURES = "{captures}"  # replaced with this round's capture names
 INGEST_PROMPT = (
     f"{ZK_MARKER} Process these captures in the zk inbox with the zk tools, following the zk "
-    f"server's instructions, and leave any others for later: {CAPTURES}"
+    f"server's instructions, and leave any others for later: {CAPTURES}. Read each one in full "
+    "before judging it. Each must end in ingest_notes (passing capture) or, if nothing in it is "
+    'worth keeping, discard(kind="capture"); a capture left as it is gets read again next run.'
 )
 RESOLVE_PROMPT = (
     f"{ZK_MARKER} Resolve the notes held in the zk inbox with the zk tools, "
@@ -213,6 +215,9 @@ def run(
     }
     with Lock(lock_path()), log_path.open("a", encoding="utf-8") as log:
         log.write(f"zk process {vault_dir} at {now.isoformat(timespec='seconds')}\n")
+        _save_status(
+            {"at": now.isoformat(timespec="seconds"), "finished": False, "log": str(log_path)}
+        )
         if catch_up:
             found = sessions.catch_up(vault_dir, days)
             saved = [f for f in found if f["saved"]]
@@ -257,15 +262,23 @@ def run(
             except Exception as exc:  # maps can wait for the next run; the notes are in
                 log.write(f"maps not updated: {exc}\n")
         log.write(f"done: {summary}\n")
-    status = {
-        "at": now.isoformat(timespec="seconds"),
-        "ok": not summary["stalled"],
-        "stalled": len(summary["stalled"]),
-        "waiting": len(list_inbox(vault_dir)),
-        "log": str(log_path),
-    }
+    _save_status(
+        {
+            "at": now.isoformat(timespec="seconds"),
+            "finished": True,
+            "ok": not summary["stalled"],
+            "stalled": len(summary["stalled"]),
+            "waiting": len(list_inbox(vault_dir)),
+            "log": str(log_path),
+        }
+    )
+    return summary
+
+
+def _save_status(status: dict) -> None:
+    """Written at the start (finished: false) and the end, so a run that was killed shows."""
     try:
+        status_path().parent.mkdir(parents=True, exist_ok=True)
         status_path().write_text(json.dumps(status, indent=2), encoding="utf-8")
     except OSError:
         pass
-    return summary

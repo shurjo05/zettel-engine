@@ -80,7 +80,12 @@ def advice(r: dict) -> list[str]:
     if r["held"]:
         out.append(f"{r['held']} notes held as likely duplicates are waiting for zk process.")
     last = r.get("last_process") or {}
-    if last and not last.get("ok", True):
+    if last and last.get("finished") is False and not process.lock_path().exists():
+        out.append(
+            f"The last zk process run ({last.get('at')}) never finished: it was stopped partway. "
+            f"Its log, {last.get('log')}, shows how far it got."
+        )
+    elif last and not last.get("ok", True):
         out.append(
             f"The last zk process run ({last.get('at')}) processed none of its captures, so "
             f"they're piling up: its log, {last.get('log')}, says why."
@@ -139,7 +144,13 @@ def render(r: dict, now: datetime) -> str:
         "- Last zk process: "
         + (
             f"{r['last_process'].get('at')}, "
-            + ("fine" if r["last_process"].get("ok", True) else "processed nothing")
+            + (
+                "never finished"
+                if r["last_process"].get("finished") is False
+                else "fine"
+                if r["last_process"].get("ok", True)
+                else "processed nothing"
+            )
             if r.get("last_process")
             else "none recorded"
         ),

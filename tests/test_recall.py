@@ -443,3 +443,40 @@ def test_weekly_review_task_and_report(vault, embedder, tmp_path):
     assert result["file"].startswith("inbox/reports/review-")
     assert "too few to tell a retrieval drop from noise" in result["text"]
     assert "Session brief: about" in result["text"] and "in a project's folder" in result["text"]
+
+
+def test_a_run_is_recorded_as_unfinished_until_it_ends(vault, tmp_path):
+    for f in (vault / "inbox").glob("*.md"):
+        f.unlink()
+    (vault / "inbox" / "2026-11-01-c0.md").write_text(
+        "---\nkind: capture\n---\n# C\n", encoding="utf-8"
+    )
+    # The stand-in agent reads the status file mid-run, as a killed run would leave it.
+    peek = f'"{process.sys.executable}" -c "print(open(r\'{process.status_path()}\').read())"'
+    summary = process.run(vault, commands={"ingest": peek, "resolve": peek})
+    assert '"finished": false' in Path(summary["log"]).read_text()
+    assert process.last_status()["finished"] is True
+    killed = {"at": "2026-11-11T12:38:00", "finished": False, "log": "process.log"}
+    advice = review.advice({**_review_numbers(), "last_process": killed})
+    assert any("never finished" in line for line in advice)
+    assert "discard" in process.INGEST_PROMPT and "in full" in process.INGEST_PROMPT
+
+
+def test_the_background_run_breaks_away_from_the_apps_job_on_windows(vault, monkeypatch):
+    from zk import sessions
+
+    calls = []
+
+    def popen(command, creationflags=0, **kwargs):
+        calls.append(creationflags)
+        if creationflags & 0x01000000:
+            raise PermissionError("the job forbids breaking away")
+
+    for name, value in (("DETACHED_PROCESS", 0x8), ("CREATE_NEW_PROCESS_GROUP", 0x200),
+                        ("CREATE_NO_WINDOW", 0x08000000),
+                        ("CREATE_BREAKAWAY_FROM_JOB", 0x01000000)):  # fmt: skip
+        monkeypatch.setattr(sessions.subprocess, name, value, raising=False)
+    monkeypatch.setattr(sessions.subprocess, "Popen", popen)
+    monkeypatch.setattr(sessions.os, "name", "nt")
+    sessions.start_process(vault)
+    assert calls[0] & 0x01000000 and not calls[1] & 0x01000000 and calls[1] & 0x8

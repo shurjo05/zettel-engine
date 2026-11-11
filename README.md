@@ -234,7 +234,8 @@ uv run zk hooks status C:\path\to\vault
 
 Logs go to the zk data folder's `logs/`. A run whose agent processes none of its captures (for
 example because its zk server didn't start) stops, exits with code 1, and is listed in the weekly
-review; `process-status.json` beside the logs records the last run. The headless agents bring their own write-enabled zk
+review, as is a run that never finished; `process-status.json` beside the logs records the last
+run. The headless agents bring their own write-enabled zk
 server (`--mcp-config`, and only that server), so the one registered for everyday sessions on the
 first line stays read-only: sessions don't load the write tools or their instructions, and can't
 write notes. Both installs warn when it's missing or registered with `--allow-writes`, and
