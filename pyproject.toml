@@ -9,6 +9,7 @@ dependencies = [
     "fastembed>=0.7",
     "mcp>=2.3",
     "pyyaml>=6.0",
+    "sqlite-vec>=0.1.6",
 ]
 
 [project.scripts]

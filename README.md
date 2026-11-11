@@ -22,7 +22,8 @@ rebuildable index stored outside the vault.
 | M9 | Maintenance reports: link suggestions, orphans, map suggestions | done |
 | M10 | Hooks that run on their own: install the session hook, catch up on sessions it missed, schedule ingest and the duplicate resolver, tested on Windows (Claude Code only for now) | done |
 | M11 | Context efficiency, answer quality with citations (`zk ask`), threshold re-checks (`zk calibrate`) | done |
-| M12 | Notes reach Claude without being asked: map notes, a session brief, a search nudge, notes for failed commands and matching prompts, reading past projects (`zk learn`), a weekly review | in progress |
+| M12 | Notes reach Claude without being asked: map notes, a session brief, a search nudge, notes for failed commands and matching prompts, reading past projects (`zk learn`), a weekly review | done |
+| M13 | Vector search inside SQLite with sqlite-vec, NumPy as the fallback | in progress |
 
 ## Setup
 
@@ -69,6 +70,12 @@ model that runs on your CPU (`BAAI/bge-small-en-v1.5` via fastembed; choose anot
 The model, about 70 MB, is downloaded from Hugging Face the first time it is used and kept in the zk
 data folder. Note text is never sent anywhere. Vectors are stored in the index, keyed by each note's
 content hash, so only new or edited notes are embedded and renamed notes keep their vectors.
+
+Every note's vector is scored against the query (exact search, no approximation). The scoring runs
+inside SQLite through [sqlite-vec](https://github.com/asg017/sqlite-vec), a small extension
+installed with zk, so vectors never leave the database. If this Python's `sqlite3` can't load
+extensions, zk falls back to NumPy with the same ranking; `ZK_VECTORS=numpy` forces that.
+`uv run python scripts/bench_vectors.py` times both at 100 to 100,000 notes.
 
 ### Hybrid search
 
@@ -407,7 +414,7 @@ sections), so an old vault can be checked without rewriting it.
 ```
 src/zk/notes.py   parse and validate one note (pure, no file access)
 src/zk/index.py   SQLite catalog: notes, links, issues, full-text index; incremental builds
-src/zk/search.py  keyword (BM25), semantic (cosine) and hybrid (RRF) search with filters
+src/zk/search.py  keyword (BM25), semantic (cosine, in SQLite via sqlite-vec) and hybrid (RRF) search
 src/zk/embed.py   local embedding model and the vector cache in the index
 src/zk/lookup.py  one note, or its neighbours, by id, file name, path or title
 src/zk/evaluate.py  retrieval metrics over a labelled query set

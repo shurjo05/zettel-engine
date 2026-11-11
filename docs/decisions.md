@@ -464,3 +464,36 @@ memento-vault, superbrain, graphify, everything-claude-code and ruflo.
 - **A weekly review, not a daily one** (Shurjo): health, retrieval on the test questions, map
   changes pending, hold drift and the brief's size, with no model. It runs Fridays at 12:00 by
   default, inside the 9:00 to 15:00 window when Shurjo's tools are usually open.
+
+## 24. Score vectors inside SQLite with sqlite-vec (2026-11-11)
+
+Decision 11 kept vectors in the index and scored them with NumPy, naming sqlite-vec as the step to
+take at around 100,000 notes. Shurjo chose to take it now (2026-11-11), as long as it is only an
+install-time dependency, so the design is ready for a larger vault before it needs to be.
+
+- **What changed.** `search._nearest` asks SQLite for `1 - vec_distance_cosine(vector, query)`
+  over the same `embeddings` table, with the same filters, ordered and limited in SQL. Vectors no
+  longer move into Python. Search is still exact: every note is scored, so results don't change.
+- **No second store.** sqlite-vec's `vec0` virtual table would have to be kept in step with
+  `embeddings` and, in this version, also scans every row. Its distance functions on the existing
+  BLOBs give the same exact search with no sync. A `vec0` table, or an approximate index, is the
+  next step only if exact search gets too slow.
+- **Measured** (`scripts/bench_vectors.py`, random 384-dimension vectors, 20 queries, Linux):
+
+  | Notes | NumPy | sqlite-vec | Same top 10 |
+  |---|---|---|---|
+  | 100 | 0.41 ms | 0.17 ms | yes |
+  | 1,000 | 3.8 ms | 1.3 ms | yes |
+  | 10,000 | 49 ms | 15 ms | yes |
+  | 100,000 | 631 ms | 171 ms | yes |
+
+  Both grow linearly. The NumPy time is mostly copying every BLOB into Python and sorting. At
+  today's 97 notes either is instant; at 100,000 sqlite-vec stays interactive.
+- **The dependency.** `sqlite-vec` (MIT/Apache-2.0) is one compiled SQLite extension with no Python
+  dependencies, published as wheels for Windows, macOS and Linux. It is loaded per connection.
+  If this Python's `sqlite3` can't load extensions (some macOS builds), or `ZK_VECTORS=numpy`
+  is set, search falls back to the NumPy path. A test checks both give the same ranking, and that
+  the extension loads on the CI platforms. NumPy stays for embedding, clustering and the duplicate
+  checks, which compare all notes at once.
+- **Unchanged:** the hooks (no vectors, no extension), keyword search, and where data goes: the
+  extension runs locally and sends nothing anywhere.

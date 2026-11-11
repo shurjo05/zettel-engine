@@ -113,3 +113,22 @@ def test_hybrid_keeps_notes_only_one_list_finds(conn, embedder):
     assert search(conn, "zebra", k=3, mode="hybrid", embedder=embedder)
     with pytest.raises(ValueError, match="hybrid search needs an embedder"):
         search(conn, "x", mode="hybrid")
+
+
+def test_sqlite_vec_loads_and_ranks_like_numpy(conn, embedder, monkeypatch):
+    from zk import search as search_module
+
+    update_embeddings(conn, embedder)
+    assert search_module.vector_backend(conn) == "sqlite-vec"  # installed with zk; CI checks it
+    queries = ["merging ranked lists", "ranking", "vectors and cosine", "notes about search"]
+    in_sql = {q: search(conn, q, k=10, mode="semantic", embedder=embedder) for q in queries}
+    monkeypatch.setenv("ZK_VECTORS", "numpy")
+    assert search_module.vector_backend(conn) == "numpy"
+    for q in queries:
+        in_numpy = search(conn, q, k=10, mode="semantic", embedder=embedder)
+        assert [h.path for h in in_numpy] == [h.path for h in in_sql[q]]
+        assert all(abs(a.score - b.score) < 1e-3 for a, b in zip(in_numpy, in_sql[q], strict=True))
+    # Filters still apply inside SQL.
+    monkeypatch.delenv("ZK_VECTORS")
+    hits = search(conn, "ranking", k=10, mode="semantic", embedder=embedder, tag="embeddings")
+    assert [h.path for h in hits] == ["notes/embeddings.md"]

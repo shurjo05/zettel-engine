@@ -6,6 +6,7 @@ and for semantic search `embed.update_embeddings`.
 
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
 from dataclasses import asdict, dataclass
@@ -205,8 +206,8 @@ def semantic_search(
 ) -> list[Hit]:
     """Cosine similarity between the query's vector and every note's vector.
 
-    Vectors are unit length, so cosine similarity is a dot product, and scoring
-    every note is one matrix-vector product: exact, and fast at vault scale.
+    Every note is scored (exact search), inside SQLite with sqlite-vec when it
+    loads, else as one NumPy matrix-vector product; both give the same ranking.
     """
     if not query.strip() or k <= 0:
         return []
@@ -227,6 +228,38 @@ def similar_to_vector(
     return _nearest(conn, embedder, vector, k, None, None) if k > 0 else []
 
 
+_VEC_MISSING = False  # set once this Python can't load sqlite-vec at all
+
+
+def vector_backend(conn: sqlite3.Connection) -> str:
+    """'sqlite-vec' if this connection can score vectors in SQL, else 'numpy'.
+
+    sqlite-vec is a SQLite extension (one compiled file, installed with zk). It
+    loads per connection; a Python whose sqlite3 can't load extensions, or
+    ZK_VECTORS=numpy, falls back to NumPy.
+    """
+    global _VEC_MISSING
+    if os.environ.get("ZK_VECTORS", "").lower() == "numpy" or _VEC_MISSING:
+        return "numpy"
+    try:
+        conn.execute("SELECT vec_version()")
+        return "sqlite-vec"
+    except sqlite3.OperationalError:
+        pass
+    try:
+        import sqlite_vec
+
+        conn.enable_load_extension(True)
+        try:
+            sqlite_vec.load(conn)
+        finally:
+            conn.enable_load_extension(False)
+        return "sqlite-vec"
+    except (ImportError, AttributeError, sqlite3.Error):
+        _VEC_MISSING = True
+        return "numpy"
+
+
 def _nearest(
     conn: sqlite3.Connection,
     embedder: Embedder,
@@ -236,11 +269,33 @@ def _nearest(
     tag: str | None,
     project: str | None = None,
 ) -> list[Hit]:
-    import numpy as np
-
     where, params = _filters(type, tag, project)
     if project:
         use_project_filter(conn)
+    if vector_backend(conn) == "sqlite-vec":
+        # Unit vectors: cosine similarity = 1 - cosine distance. Scored in C, in SQL.
+        rows = conn.execute(
+            "SELECT n.path, n.id, n.title, n.type, n.summary, "
+            "1 - vec_distance_cosine(e.vector, ?) AS score FROM notes n "
+            "JOIN embeddings e ON e.content_hash = n.content_hash AND e.model = ? "
+            "WHERE 1 = 1" + where + " ORDER BY score DESC, n.path LIMIT ?",
+            [vector.astype("float32").tobytes(), embedder.model, *params, k],
+        ).fetchall()
+        return [
+            Hit(
+                rank=rank,
+                path=r["path"],
+                id=r["id"],
+                title=r["title"],
+                type=r["type"],
+                summary=r["summary"],
+                score=round(float(r["score"]), 4),
+                snippet="",
+            )
+            for rank, r in enumerate(rows, start=1)
+        ]
+    import numpy as np
+
     rows = conn.execute(
         "SELECT n.path, n.id, n.title, n.type, n.summary, e.vector FROM notes n "
         "JOIN embeddings e ON e.content_hash = n.content_hash AND e.model = ? "
