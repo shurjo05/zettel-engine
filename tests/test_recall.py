@@ -246,6 +246,45 @@ def test_a_failed_command_shows_matching_notes_once(mapped, monkeypatch, capsys)
     assert recall.on_failure(conn, unrelated) is None
 
 
+def test_a_prompt_gets_pointers_only_when_notes_clearly_match(mapped, monkeypatch, capsys):
+    vault, conn, embedder = mapped
+    note(vault, "colcon-venv", "Colcon build fails in a virtualenv",
+         "colcon picks up the venv python and cannot find catkin_pkg; build outside the venv.",
+         type="problem")  # fmt: skip
+    refresh(vault, conn, embedder)
+    monkeypatch.delenv("ZK_INGESTING", raising=False)
+    event = {
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": "p1",
+        "cwd": str(vault),
+        "prompt": "my colcon build can't find catkin_pkg inside the virtualenv, what's wrong?",
+    }
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(event)))
+    assert hook.main([str(vault)]) == 0
+    out = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
+    assert out["hookEventName"] == "UserPromptSubmit"
+    text = out["additionalContext"]
+    assert text.startswith("Notes in the zk vault match this prompt")
+    assert "colcon-venv: Colcon build fails" in text and len(text) <= recall.PROMPT_CHARS
+
+    # Each note once per session; nothing for unrelated prompts, commands or chit-chat.
+    assert recall.on_prompt(conn, event) is None
+    fresh = {**event, "session_id": "p2"}
+    assert recall.on_prompt(conn, {**fresh, "prompt": "rename the login button to Sign in"}) is None
+    assert recall.on_prompt(conn, {**fresh, "prompt": "/review colcon catkin_pkg venv"}) is None
+    assert recall.on_prompt(conn, {**fresh, "prompt": "thanks, looks good"}) is None
+    # zk's own headless runs get nothing.
+    monkeypatch.setenv("ZK_INGESTING", "1")
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({**event, "session_id": "p3"})))
+    assert hook.main([str(vault)]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_prompt_query_drops_common_words_and_paths():
+    words = recall.prompt_query("Can you please fix the RRF fusion in src/zk/search.py for me?")
+    assert words == ["rrf", "fusion"]
+
+
 def test_error_query_keeps_the_error_words_only():
     words = recall.error_query(
         "Exit code 1\nbuilding...\nTraceback (most recent call last):\n"
@@ -338,7 +377,10 @@ def test_install_adds_each_missing_hook_and_the_rules_file_once(vault, isolated_
     hooks.install(vault, recall=False)  # an earlier install: only the session-end capture
     assert list(json.loads(settings.read_text())["hooks"]) == ["SessionEnd"]
     result = hooks.install(vault)
-    assert result["added"] == ["SessionStart", "PreToolUse", "PostToolUseFailure"]
+    assert result["added"] == [
+        "SessionStart", "PreToolUse", "PostToolUseFailure", "UserPromptSubmit"
+    ]  # fmt: skip
+    assert "matcher" not in json.loads(settings.read_text())["hooks"]["UserPromptSubmit"][0]
     data = json.loads(settings.read_text())
     assert data["hooks"]["PreToolUse"][0]["matcher"] == "Grep|Glob"
     assert data["hooks"]["PostToolUseFailure"][0]["matcher"] == "Bash|PowerShell"

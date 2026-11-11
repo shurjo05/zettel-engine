@@ -22,7 +22,7 @@ rebuildable index stored outside the vault.
 | M9 | Maintenance reports: link suggestions, orphans, map suggestions | done |
 | M10 | Hooks that run on their own: install the session hook, catch up on sessions it missed, schedule ingest and the duplicate resolver, tested on Windows (Claude Code only for now) | done |
 | M11 | Context efficiency, answer quality with citations (`zk ask`), threshold re-checks (`zk calibrate`) | done |
-| M12 | Notes reach Claude without being asked: map notes, a session brief, a search nudge, notes for failed commands, reading past projects (`zk learn`), a weekly review | in progress |
+| M12 | Notes reach Claude without being asked: map notes, a session brief, a search nudge, notes for failed commands and matching prompts, reading past projects (`zk learn`), a weekly review | in progress |
 
 ## Setup
 
@@ -256,23 +256,26 @@ cheaply, at a few points, and Claude opens more only when it needs it:
 4. **Notes for a failed command** (PostToolUseFailure on Bash or PowerShell): keyword search on
    the error lines, and up to two notes only when most of their words match. Each note is shown
    once per session; nothing is added otherwise.
-5. **When to search**: `zk hooks install` adds `~/.claude/rules/zk.md`, which Claude Code loads in
+5. **Pointers on each prompt** (UserPromptSubmit): keyword search (BM25) on the prompt's
+   uncommon words, and up to three notes only when a note shares at least three of them. Slash
+   commands get nothing, and a note already pointed to this session isn't repeated. It's silent
+   for most prompts; when it fires it adds about 60 tokens (at most about 300).
+6. **When to search**: `zk hooks install` adds `~/.claude/rules/zk.md`, which Claude Code loads in
    every project. Nothing is written into your repositories. It's a new file, never overwritten;
    edit it as you like.
-6. **Past projects**, `zk learn VAULT FOLDER...`. A free first pass, with no model, reads the
+7. **Past projects**, `zk learn VAULT FOLDER...`. A free first pass, with no model, reads the
    folder tree, README, manifests, recent commit subjects and the class and function names in each
    source file, skipping dependencies, build output and likely secret files, and saves it as an
    inbox capture. The next ingest turns it into notes on how the project is built, so reading a
    project costs no extra model call. File hashes are remembered, so a later run reads only what
    changed. A session that starts in a repository zk hasn't read starts this in the background.
    `--dry-run` prints the capture; `--skip` keeps a project out for good.
-7. **The weekly review**, `zk review VAULT`: health, inbox, retrieval on the test questions, map
+8. **The weekly review**, `zk review VAULT`: health, inbox, retrieval on the test questions, map
    changes pending, hold drift, the brief's size, and the projects read, as one page in
    `inbox/reports/`. No model.
 
 Notes recorded from a project's sessions or `zk learn` get a `project:<name>` source, and
-`search_notes` takes `project` to keep to one. Per-prompt search was left out: it costs tokens on
-every message, and the cheaper pieces above come first.
+`search_notes` takes `project` to keep to one.
 
 ### Importing a legacy vault
 
@@ -422,7 +425,7 @@ src/zk/migrate.py  import a legacy vault: convert, hold duplicates, repair links
 src/zk/resolve.py  judge and merge held duplicates
 src/zk/maintain.py  link, orphan and map suggestions
 src/zk/maps.py    map notes for topics and projects, kept up to date
-src/zk/recall.py  the session brief, the search nudge and notes for a failed command (light)
+src/zk/recall.py  the session brief, the search nudge, notes for a failed command or a prompt (light)
 src/zk/learn.py   read a project's structure into a capture, with no model
 src/zk/review.py  the weekly vault health review
 src/zk/sessions.py, hook.py, process.py, hooks.py  capture sessions, process the inbox, install hooks

@@ -2,7 +2,8 @@
 
 The hooks (see hook.py): SessionEnd captures the session; SessionStart gives
 the vault brief; PreToolUse on Grep and Glob nudges once; PostToolUseFailure on
-a shell command shows notes that match the error. The rules file,
+a shell command shows notes that match the error; UserPromptSubmit points to notes
+that clearly match the prompt. The rules file,
 ~/.claude/rules/zk.md, says when searching the vault is worth it; Claude Code
 loads it in every project, so nothing is written into the person's repositories.
 The scheduled tasks are the daily catch-up and the weekly health review.
@@ -151,6 +152,7 @@ def hook_groups(vault_dir: Path, process: bool = True, recall: bool = True) -> d
         out["SessionStart"] = group(command, HOOK_TIMEOUT)
         out["PreToolUse"] = group(command, NUDGE_TIMEOUT, "Grep|Glob")
         out["PostToolUseFailure"] = group(command, HOOK_TIMEOUT, "Bash|PowerShell")
+        out["UserPromptSubmit"] = group(command, NUDGE_TIMEOUT)
     return out
 
 

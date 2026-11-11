@@ -436,8 +436,19 @@ memento-vault, superbrain, graphify, everything-claude-code and ruflo.
   tokens), a one-line nudge the first time a session greps or globs (graphify's idea), and notes
   for a failed shell command only when most of their words match the error, once per session.
   Static "when to search" rules go in `~/.claude/rules/zk.md`, which loads in every project and
-  writes nothing into the person's repositories. Per-prompt search was left out: it costs tokens
-  on every message, and the cheaper pieces come first.
+  writes nothing into the person's repositories.
+- **Pointers on every prompt, but only when confident** (Shurjo, 2026-11-11). This was first
+  deferred because it runs on every message. Shurjo asked for it once the Claude and Codex
+  token-sharing work made cheap recall more valuable. A UserPromptSubmit hook runs BM25 on the
+  prompt's uncommon words and keeps a note only if it shares three of them (both for a
+  two-word prompt; a quarter for long prompts), at most three notes and 1,200 characters, each
+  note once per session. Measured on the legacy copy, the 30 test questions and 20 everyday
+  prompts unrelated to the vault (commit messages, CSS, an essay) gave these results:
+  - a two-word floor: 25 of 30 questions fired with a right note in 24, and 3 of the 20 everyday
+    prompts fired ("write a commit message" pointed to a note on pinning git commits);
+  - a three-word floor: 19 of 30 fired, all with a right note, and none of the 20 everyday prompts.
+  The three-word floor was kept, for precision over recall again. A pointer averages about 60
+  tokens and the hook takes about 85 ms on Linux, with no numpy.
 - **Hook text is written as facts, not instructions**, as Claude Code's hook documentation
   advises, so it reads as context rather than as an injected command.
 - **Reading past projects is two passes, and the second is free of extra calls** (graphify's

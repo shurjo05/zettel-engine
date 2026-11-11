@@ -7,7 +7,11 @@ context, so each is built to cost little:
   that project's notes; it stays under BRIEF_CHARS (about 1,000 tokens);
 - the nudge is one line, once per session, the first time Claude greps or globs;
 - after a failed shell command, up to two notes whose summary matches the error,
-  and only when they clearly match; a note is shown once per session.
+  and only when they clearly match;
+- on each prompt, up to three pointers to notes whose title, tags and summary share
+  most of the prompt's words (BM25 first, then that check), capped at PROMPT_CHARS;
+  silent when nothing clearly matches.
+A note is pointed to at most once per session, by the error or the prompt hook.
 
 Everything here only reads the index (opened read-only) and imports nothing
 heavy: hooks run on every session and every failed command. Each hook's small
@@ -34,6 +38,10 @@ MAX_PROJECT_ENTRIES = 12
 ENTRY_CHARS = 100  # a project note in the brief: its link, title and the start of its summary
 ERROR_HITS = 2
 MAX_ERROR_WORDS = 12
+PROMPT_HITS = 3
+PROMPT_MATCH = 3  # words a note must share with a prompt (lower: more pointers, more noise)
+PROMPT_CHARS = 1200  # about 300 tokens at most per prompt, and usually nothing
+MAX_PROMPT_WORDS = 16
 STATE_DAYS = 7  # per-session records older than this are cleared at session start
 NUDGE = (
     "The zk vault (search_notes) holds notes from past projects that may already "
@@ -47,6 +55,14 @@ _STOP = frozenset(
     "the and for with from that this was were are not but you your have has had can cannot "
     "could would should into onto file line exit code error errors failed failure fatal "
     "exception warning found none null true false see more info run".split()
+)
+_PROMPT_STOP = _STOP | frozenset(
+    "what how why when where which who does did doing done make made use using used add want "
+    "need needs like just get got also its it's i'm let's lets please thanks thank yes okay "
+    "now then than them they their there here about some any all one two new old should "
+    "would could will shall may might must been being because what's into over under out "
+    "only very really much many each other same different look looks think know tell show "
+    "give take try work works working fix help write change update check".split()
 )
 
 
@@ -276,3 +292,65 @@ def on_failure(conn: sqlite3.Connection, event: dict) -> str | None:
             summary = summary[:237].rstrip() + "..."
         lines.append(f"- {stem}: {h['title']}. {summary}")
     return "\n".join(lines)
+
+
+# Pointers on each prompt.
+
+
+def prompt_query(prompt: str) -> list[str]:
+    """The words in a prompt worth searching for: no common words, numbers, paths or URLs."""
+    words: list[str] = []
+    for token in prompt.split():
+        if "/" in token or "\\" in token:
+            continue
+        for w in _WORD.findall(token.lower()):
+            if len(w) >= 3 and not w.isdigit() and w not in _PROMPT_STOP and not _hexlike(w):
+                words.append(w)
+    return list(dict.fromkeys(words))[:MAX_PROMPT_WORDS]
+
+
+def for_prompt(conn: sqlite3.Connection, prompt: str, skip: set[str] = frozenset()) -> list[dict]:
+    """Notes that clearly match a prompt: BM25's best, kept only if they share most of its words.
+
+    BM25 alone always returns something; the word check is the score floor. A note must
+    contain three of the prompt's words (both, for a two-word prompt), and a quarter of
+    them for long prompts. Measured on the legacy copy (decision 23): 19 of 30 test
+    questions got pointers, all with a right note, and 0 of 20 unrelated prompts did.
+    """
+    words = prompt_query(prompt)
+    if len(words) < 2:
+        return []
+    need = min(len(words), max(PROMPT_MATCH, round(0.25 * len(words))))
+    out = []
+    for hit in keyword_search(conn, " ".join(words), k=8):
+        if hit.path in skip:
+            continue
+        tags = conn.execute("SELECT tags FROM notes WHERE path = ?", (hit.path,)).fetchone()
+        text = " ".join([hit.title, hit.summary, " ".join(json.loads(tags[0] or "[]"))])
+        if _matched(words, text) >= need:
+            out.append({"path": hit.path, "title": hit.title, "summary": hit.summary})
+        if len(out) == PROMPT_HITS:
+            break
+    return out
+
+
+def on_prompt(conn: sqlite3.Connection, event: dict) -> str | None:
+    """Pointers for a prompt, or None. Slash commands and shell escapes get nothing."""
+    prompt = str(event.get("prompt") or "").strip()
+    if not prompt or prompt[0] in "/!#":
+        return None
+    sid = str(event.get("session_id") or "")
+    state = _load_state(sid)
+    shown = set(state.get("shown") or [])
+    hits = for_prompt(conn, prompt, shown)
+    if not hits:
+        return None
+    state["shown"] = sorted(shown | {h["path"] for h in hits})
+    _save_state(sid, state)
+    lines = ["Notes in the zk vault match this prompt (get_note opens one):"]
+    for h in hits:
+        stem = h["path"].rsplit("/", 1)[-1].removesuffix(".md")
+        line = f"- {stem}: {h['title']}. {' '.join(h['summary'].split())}"
+        lines.append(line if len(line) <= 300 else line[:297].rstrip() + "...")
+    text = "\n".join(lines)
+    return text if len(text) <= PROMPT_CHARS else text[: PROMPT_CHARS - 4].rsplit("\n", 1)[0]

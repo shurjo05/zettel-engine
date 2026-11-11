@@ -8,6 +8,7 @@ hook_event_name says which hook it is:
   `zk learn` in the background when the session is in a repository zk hasn't read.
 - PreToolUse on Grep or Glob prints a one-line nudge, once per session.
 - PostToolUseFailure on a shell command prints notes that clearly match the error.
+- UserPromptSubmit prints pointers to notes that clearly match the prompt, if any.
 
 Hooks run on every session and failed command, so this imports only what the
 event needs (never numpy), and it never fails: problems go to stderr, exit code 0.
@@ -86,6 +87,18 @@ def tool_failed(vault_dir: Path, event: dict) -> None:
         conn.close()
 
 
+def prompt_submitted(vault_dir: Path, event: dict) -> None:
+    from zk import recall
+
+    conn = recall.open_index(vault_dir)
+    if conn is None:
+        return
+    try:
+        _context("UserPromptSubmit", recall.on_prompt(conn, event))
+    finally:
+        conn.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m zk.hook")
     parser.add_argument("vault", type=Path)
@@ -106,6 +119,8 @@ def main(argv: list[str] | None = None) -> int:
             pre_tool(event)
         elif name == "PostToolUseFailure":
             tool_failed(args.vault, event)
+        elif name == "UserPromptSubmit":
+            prompt_submitted(args.vault, event)
     except Exception as exc:  # a broken hook must never break the agent that ran it
         print(f"zk hook: failed: {exc}", file=sys.stderr)
     return 0
