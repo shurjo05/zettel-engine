@@ -464,3 +464,64 @@ memento-vault, superbrain, graphify, everything-claude-code and ruflo.
 - **A weekly review, not a daily one** (Shurjo): health, retrieval on the test questions, map
   changes pending, hold drift and the brief's size, with no model. It runs Fridays at 12:00 by
   default, inside the 9:00 to 15:00 window when Shurjo's tools are usually open.
+
+## 24. Score vectors inside SQLite with sqlite-vec (2026-11-11)
+
+Decision 11 kept vectors in the index and scored them with NumPy, naming sqlite-vec as the step to
+take at around 100,000 notes. Shurjo chose to take it now (2026-11-11), as long as it is only an
+install-time dependency, so the design is ready for a larger vault before it needs to be.
+
+- **What changed.** `search._nearest` asks SQLite for `1 - vec_distance_cosine(vector, query)`
+  over the same `embeddings` table, with the same filters, ordered and limited in SQL. Vectors no
+  longer move into Python. Search is still exact: every note is scored, so results don't change.
+- **No second store.** sqlite-vec's `vec0` virtual table would have to be kept in step with
+  `embeddings` and, in this version, also scans every row. Its distance functions on the existing
+  BLOBs give the same exact search with no sync. A `vec0` table, or an approximate index, is the
+  next step only if exact search gets too slow.
+- **Measured** (`scripts/bench_vectors.py`, random 384-dimension vectors, 20 queries, Linux):
+
+  | Notes | NumPy | sqlite-vec | Same top 10 |
+  |---|---|---|---|
+  | 100 | 0.41 ms | 0.17 ms | yes |
+  | 1,000 | 3.8 ms | 1.3 ms | yes |
+  | 10,000 | 49 ms | 15 ms | yes |
+  | 100,000 | 631 ms | 171 ms | yes |
+
+  Both grow linearly. The NumPy time is mostly copying every BLOB into Python and sorting. At
+  today's 97 notes either is instant; at 100,000 sqlite-vec stays interactive.
+- **The dependency.** `sqlite-vec` (MIT/Apache-2.0) is one compiled SQLite extension with no Python
+  dependencies, published as wheels for Windows, macOS and Linux. It is loaded per connection.
+  If this Python's `sqlite3` can't load extensions (some macOS builds), or `ZK_VECTORS=numpy`
+  is set, search falls back to the NumPy path. A test checks both give the same ranking, and that
+  the extension loads on the CI platforms. NumPy stays for embedding, clustering and the duplicate
+  checks, which compare all notes at once.
+- **Unchanged:** the hooks (no vectors, no extension), keyword search, and where data goes: the
+  extension runs locally and sends nothing anywhere.
+
+## 25. A background ingest that does nothing says so (2026-11-11)
+
+On the real PC, captures sat in the inbox for a day while every `zk process` run reported success.
+The logs show three different failures:
+- once, the ingest agent's zk server didn't start within Claude Code's 30-second limit;
+- twice, the run stopped partway, with no output after the agent started;
+- once, the agent read 12 captures, called them all "coursework" with nothing worth keeping (only
+  4 were), and set none of them aside.
+
+The server normally starts in about 3 seconds, so the timeout was probably a one-off (another
+`zk process` or a `uv sync` running at the same time). That's unconfirmed. The runs that stopped
+are thought to have been killed with the session that started them, which is also unconfirmed.
+The common fault was that zk judged a run by the agent's exit code.
+
+- **Judge a run by its effect.** After each round, if every capture it was given is still in the
+  inbox, the run stops instead of starting more agents. It logs why and exits with code 1.
+- **Record the outcome where it will be seen.** `process-status.json` in the zk data folder is
+  written when a run starts (not finished) and again when it ends. The weekly review reports a run
+  that processed nothing, and a run that never finished.
+- **Every capture must end somewhere.** The ingest prompt says to read each capture in full and end
+  it in `ingest_notes` or `discard`. The server's instructions say school work is worth keeping
+  when it shows a class's style rules, a concept or a mistake, which was Shurjo's own use case.
+- **Detach properly on Windows.** The background run also breaks away from the app's job object
+  (`CREATE_BREAKAWAY_FROM_JOB`, falling back when the job forbids it), so closing the session
+  can't end it.
+- **Allow the server two minutes to start** (`MCP_TIMEOUT=120000` unless already set), which is
+  cheap insurance.

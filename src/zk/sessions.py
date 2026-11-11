@@ -193,24 +193,29 @@ def catch_up(
 
 def start_process(vault_dir: Path) -> None:
     """Start `zk process` detached, so the session that is ending doesn't wait for it."""
-    flags = (
-        {
-            "creationflags": subprocess.DETACHED_PROCESS
-            | subprocess.CREATE_NEW_PROCESS_GROUP
-            | subprocess.CREATE_NO_WINDOW
-        }
-        if os.name == "nt"
-        else {"start_new_session": True}
+    command = [sys.executable, "-m", "zk", "process", str(vault_dir)]
+    common = {
+        "cwd": vault_dir,
+        "env": {**os.environ, INGESTING: "1"},
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if os.name != "nt":
+        subprocess.Popen(command, start_new_session=True, **common)
+        return
+    detached = (
+        subprocess.DETACHED_PROCESS
+        | subprocess.CREATE_NEW_PROCESS_GROUP
+        | subprocess.CREATE_NO_WINDOW
     )
-    subprocess.Popen(
-        [sys.executable, "-m", "zk", "process", str(vault_dir)],
-        cwd=vault_dir,
-        env={**os.environ, INGESTING: "1"},
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        **flags,
-    )
+    try:
+        # Out of the app's job object too, so closing the session doesn't end the run.
+        subprocess.Popen(
+            command, creationflags=detached | subprocess.CREATE_BREAKAWAY_FROM_JOB, **common
+        )
+    except OSError:  # the job doesn't allow breaking away: detached is the best we can do
+        subprocess.Popen(command, creationflags=detached, **common)
 
 
 def from_hook(vault_dir: Path, event: dict, now: datetime | None = None) -> tuple[str | None, str]:

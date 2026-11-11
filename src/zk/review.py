@@ -23,7 +23,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from zk import calibrate, checks, learn, maps, recall, vault
+from zk import calibrate, checks, learn, maps, process, recall, vault
 from zk.embed import Embedder
 from zk.evaluate import run_eval
 from zk.index import health_report
@@ -66,6 +66,7 @@ def gather(vault_dir: Path, conn: sqlite3.Connection, embedder: Embedder) -> dic
         "brief_tokens_in_project": max(largest, checks.estimate_tokens(brief)),
         "projects_learned": sorted(r["project"] for r in record["repos"].values()),
         "projects_skipped": len(record["skip"]),
+        "last_process": process.last_status(),
     }
 
 
@@ -78,6 +79,17 @@ def advice(r: dict) -> list[str]:
         out.append(f"{r['broken_links']} broken links: zk check lists them.")
     if r["held"]:
         out.append(f"{r['held']} notes held as likely duplicates are waiting for zk process.")
+    last = r.get("last_process") or {}
+    if last and last.get("finished") is False and not process.lock_path().exists():
+        out.append(
+            f"The last zk process run ({last.get('at')}) never finished: it was stopped partway. "
+            f"Its log, {last.get('log')}, shows how far it got."
+        )
+    elif last and not last.get("ok", True):
+        out.append(
+            f"The last zk process run ({last.get('at')}) processed none of its captures, so "
+            f"they're piling up: its log, {last.get('log')}, says why."
+        )
     if r["inbox"]:
         out.append(f"{r['inbox']} captures are waiting in the inbox for zk process.")
     if r["questions"] < FEW_QUESTIONS:
@@ -129,6 +141,19 @@ def render(r: dict, now: datetime) -> str:
         f"({d.get('resolved_merged', 0)} merged, {d.get('resolved_released', 0)} released)",
         f"- Session brief: about {r['brief_tokens']} tokens, up to "
         f"{r['brief_tokens_in_project']} in a project's folder",
+        "- Last zk process: "
+        + (
+            f"{r['last_process'].get('at')}, "
+            + (
+                "never finished"
+                if r["last_process"].get("finished") is False
+                else "fine"
+                if r["last_process"].get("ok", True)
+                else "processed nothing"
+            )
+            if r.get("last_process")
+            else "none recorded"
+        ),
         f"- Projects read by zk learn: {', '.join(r['projects_learned']) or 'none'}"
         + (f" ({r['projects_skipped']} kept out)" if r["projects_skipped"] else ""),
         "",

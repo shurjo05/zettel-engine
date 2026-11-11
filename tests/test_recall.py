@@ -1,6 +1,7 @@
 import io
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -360,11 +361,53 @@ def test_process_ingests_a_backlog_a_few_captures_at_a_time(vault, tmp_path):
             "---\nkind: capture\n---\n# C\n", encoding="utf-8"
         )
     calls = tmp_path / "calls"
-    agent = f"\"{process.sys.executable}\" -c \"open(r'{calls}', 'a').write('{{captures}}\\n')\""
+    script = tmp_path / "agent.py"  # a stand-in agent: records its captures and files them
+    script.write_text(
+        "import os, sys\n"
+        f"open(r'{calls}', 'a').write(sys.argv[1] + chr(10))\n"
+        "os.makedirs('inbox/processed', exist_ok=True)\n"
+        "for n in sys.argv[1].split(', '):\n"
+        "    os.replace('inbox/' + n, 'inbox/processed/' + n)\n"
+        "print(os.environ.get('MCP_TIMEOUT'))\n",
+        encoding="utf-8",
+    )
+    agent = f'"{process.sys.executable}" "{script}" "{{captures}}"'
     summary = process.run(vault, commands={"ingest": agent, "resolve": agent})
     rounds = calls.read_text().splitlines()
-    assert summary["ingest_runs"] == 2 and len(rounds) == 2
+    assert summary["ingest_runs"] == 2 and len(rounds) == 2 and summary["stalled"] == []
     assert rounds[0].split(", ") == [f"2026-11-0{i + 1}-c{i}.md" for i in range(3)]
+    assert process.MCP_START_MS in Path(summary["log"]).read_text()  # MCP servers get time
+    assert process.last_status()["ok"] is True
+
+
+def test_a_run_that_processes_nothing_stops_and_says_so(vault, tmp_path, capsys):
+    for f in (vault / "inbox").glob("*.md"):
+        f.unlink()
+    for i in range(5):
+        (vault / "inbox" / f"2026-11-0{i + 1}-c{i}.md").write_text(
+            "---\nkind: capture\n---\n# C\n", encoding="utf-8"
+        )
+    noop = f'"{process.sys.executable}" -c "print(1)"'  # like an agent whose tools never started
+    summary = process.run(vault, commands={"ingest": noop, "resolve": noop})
+    assert summary["ingest_runs"] == 1 and len(summary["stalled"]) == 3
+    assert "ingest made no progress" in Path(summary["log"]).read_text()
+    status = process.last_status()
+    assert status["ok"] is False and status["waiting"] == 5
+    assert any("processed none of its captures" in line for line in review.advice(
+        {**_review_numbers(), "last_process": status}
+    ))  # fmt: skip
+    from zk.cli import main
+
+    args = ["process", str(vault), "--ingest-command", noop, "--resolve-command", noop]
+    assert main(args) == 1
+    assert "processed none of 3" in capsys.readouterr().err
+
+
+def _review_numbers() -> dict:
+    return {
+        "errors": 0, "broken_links": 0, "held": 0, "inbox": 0, "questions": 50,
+        "maps_pending": 0, "drift": None, "brief_tokens_in_project": 100,
+    }  # fmt: skip
 
 
 def test_batches_stop_at_the_size_limit():
@@ -400,3 +443,40 @@ def test_weekly_review_task_and_report(vault, embedder, tmp_path):
     assert result["file"].startswith("inbox/reports/review-")
     assert "too few to tell a retrieval drop from noise" in result["text"]
     assert "Session brief: about" in result["text"] and "in a project's folder" in result["text"]
+
+
+def test_a_run_is_recorded_as_unfinished_until_it_ends(vault, tmp_path):
+    for f in (vault / "inbox").glob("*.md"):
+        f.unlink()
+    (vault / "inbox" / "2026-11-01-c0.md").write_text(
+        "---\nkind: capture\n---\n# C\n", encoding="utf-8"
+    )
+    # The stand-in agent reads the status file mid-run, as a killed run would leave it.
+    peek = f'"{process.sys.executable}" -c "print(open(r\'{process.status_path()}\').read())"'
+    summary = process.run(vault, commands={"ingest": peek, "resolve": peek})
+    assert '"finished": false' in Path(summary["log"]).read_text()
+    assert process.last_status()["finished"] is True
+    killed = {"at": "2026-11-11T12:38:00", "finished": False, "log": "process.log"}
+    advice = review.advice({**_review_numbers(), "last_process": killed})
+    assert any("never finished" in line for line in advice)
+    assert "discard" in process.INGEST_PROMPT and "in full" in process.INGEST_PROMPT
+
+
+def test_the_background_run_breaks_away_from_the_apps_job_on_windows(vault, monkeypatch):
+    from zk import sessions
+
+    calls = []
+
+    def popen(command, creationflags=0, **kwargs):
+        calls.append(creationflags)
+        if creationflags & 0x01000000:
+            raise PermissionError("the job forbids breaking away")
+
+    for name, value in (("DETACHED_PROCESS", 0x8), ("CREATE_NEW_PROCESS_GROUP", 0x200),
+                        ("CREATE_NO_WINDOW", 0x08000000),
+                        ("CREATE_BREAKAWAY_FROM_JOB", 0x01000000)):  # fmt: skip
+        monkeypatch.setattr(sessions.subprocess, name, value, raising=False)
+    monkeypatch.setattr(sessions.subprocess, "Popen", popen)
+    monkeypatch.setattr(sessions.os, "name", "nt")
+    sessions.start_process(vault)
+    assert calls[0] & 0x01000000 and not calls[1] & 0x01000000 and calls[1] & 0x8

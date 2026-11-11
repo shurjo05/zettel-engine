@@ -46,7 +46,10 @@ For each idea, search_notes and check_duplicates first; if an existing note alre
 covers it, leave it out. Then call ingest_notes once with all of them, each with one to three test
 questions it answers, worded the way someone would ask rather than copied from the note. Pass
 `capture` when the notes come from an inbox capture. Report the notes written and any warnings.
-A capture with nothing worth keeping is set aside with discard(kind="capture").
+A capture with nothing worth keeping is set aside with discard(kind="capture"); every capture
+ends one way or the other. School work is worth keeping when it shows how a class wants work done
+(style, format, citation rules), a concept learned, or a mistake to avoid; skip only the
+assignment's routine content.
 
 A capture whose source starts with repo: is not a conversation: it is the structure of one of the
 person's own projects (folders, README, manifests, class and function names, commit subjects).
