@@ -120,7 +120,7 @@ def test_a_capture_the_agent_leaves_is_not_retried_in_the_same_run(vault, tmp_pa
 
 def test_only_one_process_runs_at_a_time(vault, capsys):
     process.lock_path().parent.mkdir(parents=True, exist_ok=True)
-    process.lock_path().write_text("123\n")
+    process.lock_path().write_text(f"{os.getpid()}\n")  # held by a process that's running
     assert main(["process", str(vault)]) == 0
     assert "another zk process is running" in capsys.readouterr().err
     # A lock left by a run that died long ago is taken over.
@@ -131,6 +131,19 @@ def test_only_one_process_runs_at_a_time(vault, capsys):
     with process.Lock(process.lock_path()):
         pass
     assert not process.lock_path().exists()
+
+
+def test_a_lock_whose_process_has_ended_is_taken_over_at_once(vault):
+    import subprocess
+    import sys
+
+    ended = subprocess.Popen([sys.executable, "-c", "pass"])
+    ended.wait()
+    assert not process.pid_running(ended.pid) and process.pid_running(os.getpid())
+    process.lock_path().parent.mkdir(parents=True, exist_ok=True)
+    process.lock_path().write_text(f"{ended.pid}\n")  # fresh, but its holder crashed
+    with process.Lock(process.lock_path()):
+        assert process.lock_path().read_text().strip() == str(os.getpid())
 
 
 def test_default_agents_are_marked_and_bring_their_own_write_server(vault):

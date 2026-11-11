@@ -29,7 +29,7 @@ import time
 from pathlib import Path
 
 from zk.index import data_dir, default_db_path
-from zk.search import _WORD, keyword_search, project_slug, same_project
+from zk.search import _WORD, is_container, keyword_search, project_slug, same_project
 
 BRIEF_CHARS = 4000
 MAX_TOPICS = 15
@@ -92,7 +92,8 @@ def project_of(cwd: str | Path | None) -> str | None:
     if not cwd:
         return None
     root = project_root(cwd) or Path(cwd)
-    return project_slug(root.name) or None
+    slug = project_slug(root.name)
+    return slug if slug and not is_container(slug) else None
 
 
 # Per-session records.

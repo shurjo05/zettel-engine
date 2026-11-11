@@ -19,6 +19,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
+from zk import capture as captures
 from zk import checks, vault
 from zk.embed import Embedder, note_text
 from zk.notes import parse_note, split_frontmatter
@@ -88,7 +89,9 @@ def read_capture(vault_dir: Path, name: str) -> str:
     path = vault_dir / INBOX / _check_name(name)
     if not path.is_file():
         raise FileNotFoundError(f"no capture named {name!r} in the inbox")
-    return path.read_text(encoding="utf-8", errors="replace")
+    # Redacted again on the way out: captures written before a secret pattern was added
+    # still pass through the same filter before any model reads them.
+    return captures.redact(path.read_text(encoding="utf-8", errors="replace"))
 
 
 def check_duplicates(
@@ -301,10 +304,11 @@ def apply_held(vault_dir: Path, name: str, reason: str = "") -> dict:
     return result
 
 
-def discard(vault_dir: Path, name: str, kind: str = "held") -> str:
+def discard(vault_dir: Path, name: str, kind: str = "held", reason: str = "") -> str:
     """Set a held note (to inbox/rejected/) or a capture (to inbox/processed/) aside.
 
-    Nothing is deleted.
+    Nothing is deleted. The reason, if given, goes in the commit message, so `git log`
+    shows why each capture was set aside.
     """
     name = _check_name(name)
     src = f"{HELD_DIR}/{name}" if kind == "held" else f"{INBOX}/{name}"
@@ -314,5 +318,7 @@ def discard(vault_dir: Path, name: str, kind: str = "held") -> str:
     dst = vault.unique_path(vault_dir, f"{folder}/{name}")
     vault.move_new(vault_dir, src, dst)
     what = "held note" if kind == "held" else "capture"
-    _commit(vault_dir, [src, dst], f"zk: set aside {what} {name}")  # one commit, like the rest
+    message = f"zk: set aside {what} {name}"
+    reason = " ".join(reason.split())[:200]
+    _commit(vault_dir, [src, dst], f"{message}\n\n{reason}" if reason else message)
     return dst

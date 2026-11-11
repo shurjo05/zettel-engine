@@ -324,6 +324,9 @@ def cmd_process(args: argparse.Namespace) -> int:
         f"{summary['resolve_runs']} resolve run(s); log {summary['log']}",
         file=sys.stderr,
     )
+    if summary.get("reason") == "usage limit":
+        print("zk process: stopped at Claude's usage limit; the next run picks up", file=sys.stderr)
+        return 1
     if summary["stalled"]:
         print(
             f"zk process: the ingest agent processed none of {len(summary['stalled'])} "

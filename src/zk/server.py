@@ -46,10 +46,15 @@ For each idea, search_notes and check_duplicates first; if an existing note alre
 covers it, leave it out. Then call ingest_notes once with all of them, each with one to three test
 questions it answers, worded the way someone would ask rather than copied from the note. Pass
 `capture` when the notes come from an inbox capture. Report the notes written and any warnings.
-A capture with nothing worth keeping is set aside with discard(kind="capture"); every capture
-ends one way or the other. School work is worth keeping when it shows how a class wants work done
-(style, format, citation rules), a concept learned, or a mistake to avoid; skip only the
-assignment's routine content.
+A capture with nothing worth keeping is set aside with discard(kind="capture", reason=...);
+every capture ends one way or the other. Discarding is for chit-chat, setup noise and work with
+nothing reusable, not for a session that is merely about one assignment. School work (a course
+code such as CIS505 in the folder or text is the sign) is worth keeping when it shows how a class
+wants work done (style, format, naming, citation or submission rules), a concept learned, or a
+mistake to avoid; before discarding one, check it for each of those, and say in the reason which
+you looked for. Skip only the assignment's routine content. When two captures hold the same ideas
+(copies of one session, say), ingest the first and discard the second with a reason naming the
+notes that already cover it.
 
 A capture whose source starts with repo: is not a conversation: it is the structure of one of the
 person's own projects (folders, README, manifests, class and function names, commit subjects).
@@ -331,12 +336,15 @@ def _add_ingest_tools(
         )
 
     @server.tool(annotations=WRITES, structured_output=False)
-    def discard(name: str, kind: str = "held") -> str:
+    def discard(name: str, kind: str = "held", reason: str = "") -> str:
         """Set aside a held note (kind "held", to inbox/rejected/) or a capture with nothing
-        worth keeping (kind "capture", to inbox/processed/). Nothing is deleted."""
+        worth keeping (kind "capture", to inbox/processed/). Nothing is deleted. `reason`
+        (one sentence) is required for a capture and goes in the vault's commit message."""
         if kind not in ("held", "capture"):
             raise ToolError('kind must be "held" or "capture"')
-        return run(lambda c: {"moved_to": ingest.discard(vault, name, kind)})
+        if kind == "capture" and not reason.strip():
+            raise ToolError("say in one sentence why nothing in this capture is worth keeping")
+        return run(lambda c: {"moved_to": ingest.discard(vault, name, kind, reason)})
 
 
 def run_stdio(server: MCPServer) -> None:

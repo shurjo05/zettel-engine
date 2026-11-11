@@ -76,6 +76,19 @@ def project_slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
+# Folders that hold projects rather than being one. A session started in one of them
+# (C:\Users\me\source\repos, say) names no project.
+CONTAINER_FOLDERS = frozenset(
+    "repos repo source src projects project code dev documents desktop downloads users home "
+    "workspace workspaces github git onedrive".split()
+)
+
+
+def is_container(slug: str | None) -> bool:
+    """Whether a folder's slug is a folder that holds projects, not a project."""
+    return bool(slug) and slug.replace("-", "") in CONTAINER_FOLDERS
+
+
 _SOURCE_PROJECT = re.compile(r"^\s*(?:project|repo|local-repo):\s*([^/\\(+:]+)", re.I)
 
 
@@ -86,7 +99,8 @@ def source_project(source: str) -> str | None:
     (the legacy import) all name the folder the note came from.
     """
     m = _SOURCE_PROJECT.match(source)
-    return (project_slug(m.group(1)) or None) if m else None
+    slug = project_slug(m.group(1)) if m else ""
+    return slug if slug and not is_container(slug) else None
 
 
 def same_project(a: str, b: str) -> bool:

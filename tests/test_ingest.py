@@ -258,3 +258,15 @@ def test_links_between_new_notes_use_the_names_they_get(setup):
         in texts["interfaces-over-inheritance-to-enforce-contracts"]
     )
     assert not any("broken link" in w.lower() for w in result["warnings"])
+
+
+def test_captures_are_redacted_again_when_read_and_discards_keep_a_reason(vault):
+    init_repo(vault)
+    capture = vault / "inbox" / "2026-11-01-old.md"
+    capture.write_text("---\nkind: capture\n---\nPOSTGRES_PASSWORD: oldsecret99\n", "utf-8")
+    git(vault, "add", "-A")
+    git(vault, "commit", "-q", "-m", "capture")
+    assert "oldsecret99" not in ingest.read_capture(vault, capture.name)
+    ingest.discard(vault, capture.name, "capture", reason="Only a setup log, no ideas.")
+    log = git(vault, "log", "-1", "--format=%B").stdout
+    assert "set aside capture" in log and "Only a setup log" in log

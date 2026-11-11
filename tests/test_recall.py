@@ -480,3 +480,56 @@ def test_the_background_run_breaks_away_from_the_apps_job_on_windows(vault, monk
     monkeypatch.setattr(sessions.os, "name", "nt")
     sessions.start_process(vault)
     assert calls[0] & 0x01000000 and not calls[1] & 0x01000000 and calls[1] & 0x8
+
+
+def test_learn_skips_datasets_and_media(vault, repo):
+    images = repo / "data" / "train"
+    images.mkdir(parents=True)
+    for i in range(120):
+        (images / f"leaf_{i}.jpg").write_bytes(b"x")
+    (repo / "data" / "labels.npy").write_bytes(b"x")
+    (repo / "src" / "detect" / "weights.pt").write_bytes(b"x")
+    text = open(learn.learn(vault, repo)["saved"], encoding="utf-8").read()
+    assert "leaf_0.jpg" not in text and "weights.pt" not in text
+    assert "Data files not read: 122" in text
+    assert "LeafNet" in text  # the code is still read
+
+
+def _five_captures(vault):
+    for f in (vault / "inbox").glob("*.md"):
+        f.unlink()
+    for i in range(5):
+        (vault / "inbox" / f"2026-11-0{i + 1}-c{i}.md").write_text(
+            "---\nkind: capture\n---\n# C\n", encoding="utf-8"
+        )
+
+
+def test_a_run_stopped_by_the_usage_limit_says_so_and_leaves_maps_alone(
+    vault, tmp_path, monkeypatch
+):
+    _five_captures(vault)
+    refreshed = []
+    monkeypatch.setattr(maps, "update", lambda *a, **k: refreshed.append(1) or {})
+    said = "print('You' + chr(39) + 've hit your session limit')"
+    limit = f'"{process.sys.executable}" -c "{said}"'
+    summary = process.run(vault, commands={"ingest": limit, "resolve": limit})
+    assert summary["reason"] == "usage limit" and summary["ingest_runs"] == 1
+    assert summary["processed"] == 0 and refreshed == []  # nothing changed, so no maps
+    status = process.last_status()
+    assert status["ok"] is False and status["reason"] == "usage limit"
+    advice = review.advice({**_review_numbers(), "last_process": status})
+    assert any("usage limit" in line for line in advice)
+
+
+def test_container_folders_are_no_project(tmp_path):
+    from zk import sessions
+    from zk.search import source_project
+
+    assert source_project("project:repos") is None and source_project("repo:Source") is None
+    assert source_project("project:nautilustrx") == "nautilustrx"
+    repos = tmp_path / "repos"
+    repos.mkdir()
+    subprocess.run(["git", "init", "-q", str(repos)], check=True)
+    assert recall.project_of(repos) is None and sessions._project(str(repos)) is None
+    assert sessions._project(str(tmp_path / "gone" / "source")) is None
+    assert sessions._project(str(tmp_path / "gone" / "AphidDetection")) == "AphidDetection"

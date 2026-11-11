@@ -525,3 +525,37 @@ The common fault was that zk judged a run by the agent's exit code.
   can't end it.
 - **Allow the server two minutes to start** (`MCP_TIMEOUT=120000` unless already set), which is
   cheap insurance.
+
+## 26. Lessons from the first real background runs (2026-11-11)
+
+Switching M12 on from the PC, with `zk learn` reading eight past projects and `zk process` working
+through the backlog, turned up six faults. Each fix is small and keeps the earlier rules.
+
+- **Secrets with a prefix.** `POSTGRES_PASSWORD: ...` and `JWT_SECRET=...` slipped past the
+  redaction, which only knew bare names. A setting is now redacted when its name contains a secret
+  word with any prefix or suffix (`DB_PASSWORD`, `SECRET_KEY`), and so is the password in a
+  connection URL. Values made of brackets or commas are left alone, so code such as
+  `def login(password: str)` stays readable. `read_capture` redacts again, so captures written
+  before a pattern was added are filtered before a model reads them. Committed captures in
+  `inbox/processed/` are not rewritten: vault files are never changed silently.
+- **Learn read datasets.** One project's tree listed 4,000 images. Media, model weights, archives
+  and array files are skipped, as is any folder holding 100 or more non-code files of one kind;
+  the capture says how many data files it didn't read.
+- **A crashed run's lock blocked the next for two hours.** The lock holds its PID; a lock whose
+  process has ended is taken over at once. The two-hour age limit stays for a PID that can't be
+  read.
+- **Usage limits looked like stalls.** Claude Code prints "You've hit your session limit" and exits.
+  The run now recognises that, stops, and records `reason: "usage limit"`, which the review reports
+  as "the next run picks up" rather than as a fault.
+- **Maps were refreshed after a run that changed nothing.** They're refreshed only when a capture
+  was processed or a held note resolved.
+- **A folder of repositories was taken for a project.** Sessions started in `source\repos` made a
+  `project-repos` map. Common container folders (repos, source, src, projects, code, Documents,
+  GitHub and similar) name no project.
+- **School sessions were discarded.** The agent set aside four course sessions as routine
+  coursework. The instructions now say a course code is the sign of school work, to check it for
+  style, format, naming, citation or submission rules, concepts and mistakes before discarding, and
+  to say which were looked for. `discard` requires that reason for a capture, and it goes in the
+  vault commit, so `git log` shows why each one was set aside. Copies of one session are ingested
+  once and the copy discarded with a reason naming the notes that cover it.
+

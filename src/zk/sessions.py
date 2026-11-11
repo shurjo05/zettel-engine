@@ -28,6 +28,7 @@ from pathlib import Path
 
 from zk import capture, vault
 from zk.index import data_dir
+from zk.search import is_container, project_slug
 
 INGESTING = "ZK_INGESTING"  # set for zk's own agents, so their sessions aren't captured
 IDLE_MINUTES = 30  # a transcript touched more recently may still be in use
@@ -70,11 +71,16 @@ def _project(cwd: str | None) -> str | None:
         return None
     here = Path(cwd)
     if not here.exists():
-        return here.name or None
+        return _named(here.name)
     for folder in (here, *here.parents):
         if (folder / ".git").exists():
-            return folder.name or None
+            return _named(folder.name)
     return None
+
+
+def _named(name: str) -> str | None:
+    """A folder's name as a project, unless it's a folder that holds projects."""
+    return name if name and not is_container(project_slug(name)) else None
 
 
 def transcripts(days: float, now: float | None = None) -> list[Path]:
