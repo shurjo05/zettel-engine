@@ -623,3 +623,25 @@ signature lines with little prose and the use-case sections describe the same ca
 semantic search alone does better than hybrid on these docs, but hybrid stays the default because
 it is better on the notes, which are what most searches are for. Splitting by structure works for
 headed Markdown; PDFs are cut by page and titled by their first heading-like line.
+
+**Code maps and per-project clusters, tried and left out.** Shurjo asked whether the vault should
+also cover the code, so Claude needn't go through the files. Three versions were measured
+end to end, with 10 questions per project (where is X, what a method takes, how a flow works,
+where to change something), each answered by a fresh headless Claude Sonnet in the project, on
+chat501 (docs-heavy C#) and FinancialAIAssistant (lighter docs, Python and TypeScript):
+
+| total cost, 10 questions (right of 10) | chat501 | FinancialAIAssistant |
+|---|---|---|
+| files only, run 1 | $1.10 (9) | $1.09 (10) |
+| files only, run 2 | $1.17 (9) | $1.03 (9) |
+| doc sections + a code map per source file | $1.29 (10) | $1.01 (9) |
+| the same + model-written cluster notes per component | $1.39 (10) | $1.04 (10) |
+| code maps + "answer from the note, don't open the file" | $1.34 (9) | $1.29 (7) |
+
+Cluster notes cost about $1 per project to build and were never cheaper. Cost follows the number
+of turns, as each turn re-sends Claude Code's own prompt (about 40k tokens, mostly cached), not
+the bytes read: with the vault the agent searched, read the note and still opened the file. Told
+to answer from notes, it searched more and repeated doc text that the code had since changed.
+Code maps were never wrong but came out even with reading files (the two files-only runs differ by
+about 6%). On code, one grep usually lands, so the vault's savings are in long docs and in notes,
+not source files. The code-map implementation is kept on the `code-maps` branch.

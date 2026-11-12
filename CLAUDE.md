@@ -3,7 +3,7 @@
 Read README.md first. Then:
 
 - Commands: `uv sync`, `uv run pytest -q`, `uv run ruff check .`, `uv run ruff format .`
-- `notes.py` and `outline.py` stay pure (no file access). `index.py` may only read the vault and write the
+- `notes.py` stays pure (no file access). `index.py` may only read the vault and write the
   SQLite index. `search.py`, `lookup.py` and `evaluate.py` only read the index; `cli.py` and
   `server.py` may refresh it through `index.build_index`, and `embed.py` writes only the
   `embeddings` table. MCP tools stay read-only unless
@@ -12,7 +12,7 @@ Read README.md first. Then:
   `vault.replace`, needs the content hash the caller read. `ingest.py`, `migrate.py` and
   `resolve.py` write only through it, and only `resolve.merge_held`, `maps.update` and `docs.import_docs` (on files zk generated and nobody has
   edited) use `replace`. `maps.py` writes only `maps/` and never deletes: it retires a map by moving it.
-  `docs.py` reads a project's doc and source files and writes only `refs/` through `vault.py`, using
+  `docs.py` reads a project's doc files and writes only `refs/` through `vault.py`, using
   `replace` only on sections zk generated and nobody edited, and retires a section by moving it.
   `maintain.py` only reads the index. `sessions.py` reads agent transcripts and writes only
   captures (through `vault.py`) and its record in the zk data folder. `hooks.py` writes the

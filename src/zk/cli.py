@@ -518,7 +518,6 @@ def cmd_docs(args: argparse.Namespace) -> int:
             pdftotext=args.pdftotext,
             project=args.project,
             dry_run=args.dry_run,
-            code=False if args.no_code else None,
         )
     except (FileNotFoundError, ValueError) as exc:
         print(f"zk docs: {exc}", file=sys.stderr)
@@ -958,7 +957,7 @@ def main(argv: list[str] | None = None) -> int:
     p_learn.set_defaults(func=cmd_learn)
 
     p_docs = sub.add_parser(
-        "docs", help="copy a project's docs and code maps into the vault (no model)"
+        "docs", help="copy a project's docs into the vault, one note per section (no model)"
     )
     _common(p_docs)
     _model_option(p_docs)
@@ -975,9 +974,6 @@ def main(argv: list[str] | None = None) -> int:
     p_docs.add_argument("--pdftotext", help="path to Poppler's pdftotext, to read PDFs")
     p_docs.add_argument("--project", help="project name (default: the folder's name)")
     p_docs.add_argument("--dry-run", action="store_true", help="list the changes, write nothing")
-    p_docs.add_argument(
-        "--no-code", action="store_true", help="no code maps of the source files, docs only"
-    )
     p_docs.add_argument("--forget", action="store_true", help="stop syncing this project's docs")
     p_docs.add_argument("--quiet", action="store_true", help=argparse.SUPPRESS)
     p_docs.set_defaults(func=cmd_docs)

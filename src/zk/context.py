@@ -67,8 +67,6 @@ def run_context(
         front = json.loads(row[0] or "{}") if row else {}
         if not front.get("doc"):
             return 0
-        if front.get("code"):  # a code map: the size of the source file
-            return int(front.get("file_tokens") or 0)
         contents = conn.execute(
             "SELECT frontmatter FROM notes WHERE type = 'reference' "
             "AND json_extract(frontmatter, '$.contents') "
