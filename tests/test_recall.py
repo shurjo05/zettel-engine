@@ -430,13 +430,18 @@ def test_install_adds_each_missing_hook_and_the_rules_file_once(vault, isolated_
     assert list(json.loads(settings.read_text())["hooks"]) == ["SessionEnd"]
     result = hooks.install(vault)
     assert result["added"] == [
-        "SessionStart", "PreToolUse", "PostToolUseFailure", "UserPromptSubmit"
+        "SessionStart", "PreToolUse (Grep|Glob)", "PreToolUse (Read)",
+        "PostToolUseFailure (Bash|PowerShell)", "UserPromptSubmit",
     ]  # fmt: skip
     assert "matcher" not in json.loads(settings.read_text())["hooks"]["UserPromptSubmit"][0]
     data = json.loads(settings.read_text())
-    assert data["hooks"]["PreToolUse"][0]["matcher"] == "Grep|Glob"
+    assert [g["matcher"] for g in data["hooks"]["PreToolUse"]] == ["Grep|Glob", "Read"]
     assert data["hooks"]["PostToolUseFailure"][0]["matcher"] == "Bash|PowerShell"
     assert "zk vault" in hooks.rules_path().read_text()
+    # An install from before the Read hook gets just that entry added.
+    data["hooks"]["PreToolUse"].pop()
+    settings.write_text(json.dumps(data))
+    assert hooks.install(vault)["added"] == ["PreToolUse (Read)"]
     hooks.rules_path().write_text("my own rules\n")
     assert hooks.install(vault)["action"] == "already installed"
     assert hooks.rules_path().read_text() == "my own rules\n"

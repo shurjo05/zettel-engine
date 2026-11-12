@@ -33,7 +33,8 @@ def _notes(conn: sqlite3.Connection, embedder: Embedder):
     """(rows, matrix): every note with an embedding, in path order, and its unit vectors."""
     rows = conn.execute(
         "SELECT n.path, n.title, n.tags, e.vector FROM notes n JOIN embeddings e "
-        "ON e.content_hash = n.content_hash AND e.model = ? ORDER BY n.path",
+        "ON e.content_hash = n.content_hash AND e.model = ? "
+        "WHERE n.type IS NOT 'reference' ORDER BY n.path",  # a project's docs aren't notes
         (embedder.model,),
     ).fetchall()
     if not rows:
@@ -116,7 +117,8 @@ def orphan_report(
     orphans = [
         r["path"]
         for r in conn.execute(
-            "SELECT path FROM notes n WHERE type IS NOT 'map' AND NOT EXISTS ("
+            "SELECT path FROM notes n WHERE coalesce(type, '') NOT IN ('map', 'reference') "
+            "AND NOT EXISTS ("
             "  SELECT 1 FROM links l WHERE l.dst_path = n.path AND l.src_path != n.path"
             "  AND l.src_path NOT IN (SELECT path FROM notes WHERE type = 'map')"
             ") ORDER BY path"

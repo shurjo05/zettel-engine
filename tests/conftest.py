@@ -98,10 +98,12 @@ def no_real_claude(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def no_background_work(monkeypatch):
-    """Tests never load a real embedding model for maps, or start a detached zk learn."""
-    from zk import learn, process
+    """Tests never load a real embedding model for maps, or start a detached zk learn or
+    docs sync. What would have started is listed (a docs sync as ("docs", root))."""
+    from zk import docs, learn, process
 
     started = []
     monkeypatch.setattr(process, "refresh_maps", lambda vault_dir, log: None)
     monkeypatch.setattr(learn, "start", lambda vault_dir, root: started.append(root))
+    monkeypatch.setattr(docs, "start", lambda vault_dir, root: started.append(("docs", root)))
     return started

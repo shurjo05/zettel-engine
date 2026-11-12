@@ -139,21 +139,38 @@ def installed() -> dict[str, list[str]]:
     return _zk_commands(data)
 
 
-def hook_groups(vault_dir: Path, process: bool = True, recall: bool = True) -> dict[str, dict]:
-    """The settings entry zk adds for each hook event."""
+def hook_groups(
+    vault_dir: Path, process: bool = True, recall: bool = True
+) -> list[tuple[str, dict]]:
+    """The settings entries zk adds: (hook event, entry), an event's matchers each their own."""
     command = hook_command(vault_dir, process=False)
 
     def group(cmd: str, timeout: int, matcher: str | None = None) -> dict:
         entry = {"hooks": [{"type": "command", "command": cmd, "timeout": timeout}]}
         return {"matcher": matcher, **entry} if matcher else entry
 
-    out = {"SessionEnd": group(hook_command(vault_dir, process), HOOK_TIMEOUT)}
+    out = [("SessionEnd", group(hook_command(vault_dir, process), HOOK_TIMEOUT))]
     if recall:
-        out["SessionStart"] = group(command, HOOK_TIMEOUT)
-        out["PreToolUse"] = group(command, NUDGE_TIMEOUT, "Grep|Glob")
-        out["PostToolUseFailure"] = group(command, HOOK_TIMEOUT, "Bash|PowerShell")
-        out["UserPromptSubmit"] = group(command, NUDGE_TIMEOUT)
+        out += [
+            ("SessionStart", group(command, HOOK_TIMEOUT)),
+            ("PreToolUse", group(command, NUDGE_TIMEOUT, "Grep|Glob")),
+            ("PreToolUse", group(command, NUDGE_TIMEOUT, "Read")),  # a doc that's in the vault
+            ("PostToolUseFailure", group(command, HOOK_TIMEOUT, "Bash|PowerShell")),
+            ("UserPromptSubmit", group(command, NUDGE_TIMEOUT)),
+        ]
     return out
+
+
+def _zk_matchers(data: dict) -> set[tuple[str, str]]:
+    """(event, matcher) for every settings entry that runs a zk hook."""
+    hooks = data.get("hooks")
+    return {
+        (event, str(g.get("matcher") or ""))
+        for event, groups in (hooks.items() if isinstance(hooks, dict) else [])
+        for g in (groups if isinstance(groups, list) else [])
+        if isinstance(g, dict)
+        and any(isinstance(h, dict) and _is_zk(h.get("command", "")) for h in g.get("hooks") or [])
+    }
 
 
 def _load(path: Path) -> tuple[dict, str]:
@@ -177,17 +194,19 @@ def install(
     path = settings_path()
     data, before = _load(path)
     existing = _zk_commands(data)
+    present = _zk_matchers(data)
     hooks = data.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         raise ValueError(f"{path} has an unexpected 'hooks' shape; not changing it")
     added: list[str] = []
-    for event, group in hook_groups(vault_dir, process, recall).items():
-        if existing.get(event):
+    for event, group in hook_groups(vault_dir, process, recall):
+        if (event, str(group.get("matcher") or "")) in present:
             continue
         if not isinstance(hooks.setdefault(event, []), list):
             raise ValueError(f"{path} has an unexpected 'hooks.{event}' shape; not changing it")
         hooks[event].append(group)
-        added.append(event)
+        matcher = group.get("matcher")
+        added.append(f"{event} ({matcher})" if matcher else event)
     rules = rules_path()
     add_rules = recall and not rules.exists()
     result: dict = {"path": str(path), "added": added, "existing": existing}

@@ -23,7 +23,8 @@ rebuildable index stored outside the vault.
 | M10 | Hooks that run on their own: install the session hook, catch up on sessions it missed, schedule ingest and the duplicate resolver, tested on Windows (Claude Code only for now) | done |
 | M11 | Context efficiency, answer quality with citations (`zk ask`), threshold re-checks (`zk calibrate`) | done |
 | M12 | Notes reach Claude without being asked: map notes, a session brief, a search nudge, notes for failed commands and matching prompts, reading past projects (`zk learn`), a weekly review | done |
-| M13 | Vector search inside SQLite with sqlite-vec, NumPy as the fallback | in progress |
+| M13 | Vector search inside SQLite with sqlite-vec, NumPy as the fallback | done |
+| M14 | A project's docs in the vault, one note per section (`zk docs`), and reads of long docs pointed at the section that answers | in progress |
 
 ## Setup
 
@@ -294,6 +295,39 @@ Notes recorded from a project's sessions or `zk learn` get a `project:<name>` so
 `search_notes` takes `project` to keep to one. A folder that holds projects (`repos`, `source`,
 `Documents`, `GitHub` and the like) is not taken for a project.
 
+### Project docs
+
+`zk docs VAULT FOLDER` copies a project's documentation into the vault, one note per section,
+so an agent working in the project finds the part of a spec it needs instead of reading the whole
+file. No model runs: each note is the doc's own text, cut at its headings until a section fits
+in what the embedding model reads (about 400 tokens). A section with no headings left is cut
+between paragraphs, and a long table keeps its header row in every part. PDFs are read with
+Poppler's `pdftotext` when it's installed (`--pdftotext PATH`, or `ZK_PDFTOTEXT`) and cut by page.
+
+```bash
+uv run zk docs C:\path\to\vault C:\path\to\project --dry-run
+uv run zk docs C:\path\to\vault C:\path\to\project --skip "docs/uml/*.pdf" --skip prompt-log.md
+```
+
+- **What it reads**: `*.md` and `*.pdf` (change with `--only`), not build output or dependency
+  folders, likely secret files, the `CLAUDE.md` and `AGENTS.md` that agents load anyway, a PDF
+  with a Markdown file of the same name (it was rendered from it), or a second copy of a doc.
+  Secrets are redacted as in captures.
+- **Where it goes**: `refs/<project>/`, one note per section plus a contents note per doc, type
+  `reference`. Search finds them like notes; `search_notes(..., project=...)` keeps to one
+  project. They are not atomic notes, so duplicate checks, clustering, maps and orphan counts
+  leave them out.
+- **Keeping up**: running it again rewrites only the sections that changed, leaves a section
+  someone edited alone, and moves sections that are gone to `refs/retired/`. One commit per run.
+  The options are remembered, and a session that starts in the project re-syncs in the background
+  when its docs changed. `--forget` stops that.
+- **Reading through sections**: the session brief in that project lists its docs. When Claude
+  reads a whole doc of about 1,500 tokens or more, the Read hook turns the read back once with the
+  doc's contents note and the search to use; reading again, or reading part of the file, goes
+  ahead. `ZK_READ_REDIRECT=0` turns this off. Run `zk hooks install` again to add the hook.
+- `zk eval --context` with questions whose answers are doc sections also reports what reading
+  the whole doc file costs.
+
 ### Importing a legacy vault
 
 `zk import` brings an old vault's notes into this one. It only reads the old folder.
@@ -444,6 +478,7 @@ src/zk/maintain.py  link, orphan and map suggestions
 src/zk/maps.py    map notes for topics and projects, kept up to date
 src/zk/recall.py  the session brief, the search nudge, notes for a failed command or a prompt (light)
 src/zk/learn.py   read a project's structure into a capture, with no model
+src/zk/docs.py    a project's docs into the vault, one note per section, kept in sync
 src/zk/review.py  the weekly vault health review
 src/zk/sessions.py, hook.py, process.py, hooks.py  capture sessions, process the inbox, install hooks
 src/zk/cli.py     the `zk` command

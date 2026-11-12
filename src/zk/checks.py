@@ -190,7 +190,10 @@ def split_waiting(vault: Path, broken: list[dict]) -> tuple[list[dict], list[dic
 
 def long_notes(conn: sqlite3.Connection) -> list[tuple[str, int]]:
     """Every note estimated to be over the embedding model's limit, longest first."""
-    rows = conn.execute("SELECT path, title, body FROM notes").fetchall()
+    rows = conn.execute(  # a doc's contents note is a list of links, opened by name
+        "SELECT path, title, body FROM notes WHERE NOT (type IS 'reference' "
+        "AND coalesce(json_extract(frontmatter, '$.contents'), 0))"
+    ).fetchall()
     sized = [(r["path"], estimate_tokens(note_text(r["title"], r["body"]))) for r in rows]
     return sorted(((p, n) for p, n in sized if n > MAX_TOKENS), key=lambda x: (-x[1], x[0]))
 
@@ -201,7 +204,8 @@ def near_duplicates(
     """Pairs of notes at cosine similarity `at` or more, most similar first."""
     rows = conn.execute(
         "SELECT n.path, e.vector FROM notes n JOIN embeddings e "
-        "ON e.content_hash = n.content_hash AND e.model = ? ORDER BY n.path",
+        "ON e.content_hash = n.content_hash AND e.model = ? "
+        "WHERE n.type IS NOT 'reference' ORDER BY n.path",
         (embedder.model,),
     ).fetchall()
     if len(rows) < 2:

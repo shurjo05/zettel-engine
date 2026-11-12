@@ -90,7 +90,8 @@ def sample_pairs(conn: sqlite3.Connection, embedder: Embedder, per_band: int = 6
     """
     rows = conn.execute(
         "SELECT n.path, n.title, n.body, n.content_hash, e.vector FROM notes n JOIN embeddings e "
-        "ON e.content_hash = n.content_hash AND e.model = ? ORDER BY n.path",
+        "ON e.content_hash = n.content_hash AND e.model = ? "
+        "WHERE n.type IS NOT 'reference' ORDER BY n.path",
         (embedder.model,),
     ).fetchall()
     if len(rows) < 2:

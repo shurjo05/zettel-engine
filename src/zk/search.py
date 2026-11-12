@@ -128,11 +128,15 @@ def use_project_filter(conn: sqlite3.Connection) -> None:
     conn.create_function("zk_in_project", 2, _source_in_project, deterministic=True)
 
 
-def _filters(type: str | None, tag: str | None, project: str | None = None) -> tuple[str, list]:
+def _filters(
+    type: str | None, tag: str | None, project: str | None = None, notes_only: bool = False
+) -> tuple[str, list]:
     sql, params = "", []
     if type:
         sql += " AND n.type = ?"
         params.append(type.lower())
+    elif notes_only:  # the duplicate check: a project's docs (references) aren't notes
+        sql += " AND coalesce(n.type, '') NOT IN ('map', 'reference')"
     else:
         sql += " AND n.type IS NOT 'map'"  # map notes list other notes; open them by name
     if project:
@@ -239,7 +243,7 @@ def similar_to_vector(
     conn: sqlite3.Connection, embedder: Embedder, vector: np.ndarray, k: int = 5
 ) -> list[Hit]:
     """Notes closest to an already embedded document vector."""
-    return _nearest(conn, embedder, vector, k, None, None) if k > 0 else []
+    return _nearest(conn, embedder, vector, k, None, None, notes_only=True) if k > 0 else []
 
 
 _VEC_MISSING = False  # set once this Python can't load sqlite-vec at all
@@ -282,8 +286,9 @@ def _nearest(
     type: str | None,
     tag: str | None,
     project: str | None = None,
+    notes_only: bool = False,
 ) -> list[Hit]:
-    where, params = _filters(type, tag, project)
+    where, params = _filters(type, tag, project, notes_only)
     if project:
         use_project_filter(conn)
     if vector_backend(conn) == "sqlite-vec":

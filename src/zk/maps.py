@@ -117,7 +117,7 @@ def _entry(row: sqlite3.Row) -> str:
 def plan(conn: sqlite3.Connection, embedder: Embedder) -> list[dict]:
     """The maps the vault should have now: name, kind, title, label and member paths."""
     rows = _rows(conn)
-    notes = [r for r in rows if r["type"] != "map"]
+    notes = [r for r in rows if r["type"] not in ("map", "reference")]
     existing = _existing(rows)
     projects = {r["path"]: projects_of(json.loads(r["sources"] or "[]")) for r in notes}
     groups = group_projects([p for names in projects.values() for p in names])

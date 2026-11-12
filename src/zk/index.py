@@ -22,7 +22,7 @@ from zk.notes import Note, content_hash, parse_note, validate
 SCHEMA_VERSION = "3"
 
 # Raw captures and templates live in the vault but are not atomic notes.
-DEFAULT_EXCLUDES = ("inbox/**", "templates/**", "maps/retired/**")
+DEFAULT_EXCLUDES = ("inbox/**", "templates/**", "maps/retired/**", "refs/retired/**")
 
 _SCHEMA = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -352,7 +352,8 @@ def health_report(conn: sqlite3.Connection) -> Report:
     report.orphans = [
         r["path"]
         for r in conn.execute(
-            "SELECT path FROM notes n WHERE type IS NOT 'map' AND NOT EXISTS ("
+            "SELECT path FROM notes n WHERE coalesce(type, '') NOT IN ('map', 'reference') "
+            "AND NOT EXISTS ("
             "  SELECT 1 FROM links l WHERE l.dst_path = n.path AND l.src_path != n.path"
             "  AND l.src_path NOT IN (SELECT path FROM notes WHERE type = 'map')"
             ") ORDER BY path"

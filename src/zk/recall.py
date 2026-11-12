@@ -6,6 +6,8 @@ context, so each is built to cost little:
 - the brief names the map notes (a capped list) and, in a known project, lists
   that project's notes; it stays under BRIEF_CHARS (about 1,000 tokens);
 - the nudge is one line, once per session, the first time Claude greps or globs;
+- reading a long doc that `zk docs` put in the vault is turned back once per file per
+  session, with the way to its sections (a whole read, or a read of a part, goes ahead);
 - after a failed shell command, up to two notes whose summary matches the error,
   and only when they clearly match;
 - on each prompt, up to three pointers to notes whose title, tags and summary share
@@ -42,6 +44,8 @@ PROMPT_HITS = 3
 PROMPT_MATCH = 3  # words a note must share with a prompt (lower: more pointers, more noise)
 PROMPT_CHARS = 1200  # about 300 tokens at most per prompt, and usually nothing
 MAX_PROMPT_WORDS = 16
+MAX_PROJECT_DOCS = 8  # docs listed in the brief for the project a session is in
+REDIRECT_TOKENS = 1500  # a doc this long is read through its sections first
 STATE_DAYS = 7  # per-session records older than this are cleared at session start
 NUDGE = (
     "The zk vault (search_notes) holds notes from past projects that may already "
@@ -152,8 +156,17 @@ def brief(
     The project is the one `cwd` is in, unless `project` names one (the review uses that
     to measure the largest brief).
     """
-    count = conn.execute("SELECT count(*) FROM notes WHERE type IS NOT 'map'").fetchone()[0]
-    if not count:
+    count = conn.execute(
+        "SELECT count(*) FROM notes WHERE coalesce(type, '') NOT IN ('map', 'reference')"
+    ).fetchone()[0]
+    docs = [
+        json.loads(f or "{}")
+        for (f,) in conn.execute(
+            "SELECT frontmatter FROM notes WHERE type = 'reference' "
+            "AND json_extract(frontmatter, '$.contents') ORDER BY path"
+        )
+    ]
+    if not count and not docs:
         return ""
     maps = conn.execute(
         "SELECT path, body, frontmatter FROM notes WHERE type = 'map' ORDER BY path"
@@ -191,6 +204,27 @@ def brief(
             + ", ".join(shown[:MAX_PROJECTS])
             + (f", and {more} more" if more else "")
         )
+    if docs:
+        sections = sum(int(d.get("sections") or 0) for d in docs)
+        lines.append(
+            f"It also holds {sections} sections of {len(docs)} project docs (type reference), "
+            "each a doc's own text, so a search returns the part of a doc that answers."
+        )
+    current_docs = [d for d in docs if current and same_project(current, str(d.get("project")))]
+    if current_docs:
+        project = current_docs[0].get("project")
+        lines.append(
+            f'This project\'s docs are in the vault: search_notes(query, project="{project}") '
+            "returns the matching section; get_note on a contents note lists a doc's sections."
+        )
+        for d in current_docs[:MAX_PROJECT_DOCS]:
+            stem = str(d.get("id", "")).removeprefix(f"ref-{project}-")
+            lines.append(
+                f"- {d.get('doc')}: {d.get('sections')} sections, ~{d.get('doc_tokens')} tokens "
+                f"(contents: {stem})"
+            )
+        if len(current_docs) > MAX_PROJECT_DOCS:
+            lines.append(f"(and {len(current_docs) - MAX_PROJECT_DOCS} more docs)")
     if here:
         name, project, body = here
         entries = _notes_section(body)
@@ -218,6 +252,50 @@ def nudge(event: dict) -> str | None:
     state["nudged"] = True
     _save_state(sid, state)
     return NUDGE
+
+
+# Reads of a doc that is in the vault.
+
+
+def on_read(event: dict) -> str | None:
+    """Why a Read of a long imported doc should go through its sections, or None to let it run.
+
+    Only a whole-file read of a doc of REDIRECT_TOKENS or more, unchanged since it was
+    imported, and only the first time in a session: the second read goes ahead, so the
+    agent can still read the whole file when it needs to. ZK_READ_REDIRECT=0 turns it off.
+    """
+    if event.get("tool_name") != "Read" or os.environ.get("ZK_READ_REDIRECT") == "0":
+        return None
+    args = event.get("tool_input") or {}
+    path = args.get("file_path")
+    if not path or args.get("offset") or args.get("limit"):
+        return None
+    from zk import docs
+
+    found = docs.project_for(path)
+    if found is None:
+        return None
+    entry, rel = found
+    doc = (entry.get("docs") or {}).get(rel)
+    if not doc or int(doc.get("tokens") or 0) < REDIRECT_TOKENS:
+        return None
+    if docs._stamp(Path(path)) != (entry.get("files") or {}).get(rel):
+        return None  # changed since the import: the vault's copy may be behind
+    sid = str(event.get("session_id") or "")
+    state = _load_state(sid)
+    seen = set(state.get("reads") or [])
+    if rel in seen:
+        return None
+    state["reads"] = sorted(seen | {rel})
+    _save_state(sid, state)
+    project = entry.get("project")
+    stem = str(doc.get("contents", "")).removeprefix(f"ref-{project}-")
+    return (
+        f"zk: {rel} (about {doc.get('tokens')} tokens) is in the zk vault as "
+        f'{doc.get("sections")} sections. search_notes("<what you need>", project="{project}") '
+        f'returns the section that answers, and get_note("{stem}") lists them all. '
+        "To read the whole file anyway, read it again; this check runs once per file."
+    )
 
 
 # Notes for a failed command.

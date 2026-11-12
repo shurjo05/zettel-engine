@@ -565,3 +565,41 @@ although the saved capture was redacted. A preview should show exactly what woul
 dry run is now redacted too. In the same run, a background `zk process` that started before
 `git pull` finished on the old code and re-created the `repos` map; that was a one-off of updating
 mid-run, so nothing was changed for it.
+
+## 27. A project's docs in the vault, one note per section (2026-11-12)
+
+Shurjo asked for the CIS501 chat501 project's documentation in the vault, "so that working in that
+project doesn't eat up all my context and tokens". The project holds about 125k tokens of unique
+docs (24 Markdown files, 16 PDFs): class contracts, use-case realizations, test specs, a deviation
+log, course specs. An agent answering one question about a class reads the whole 6,000-word
+contract.
+
+- **The doc's own text, not notes written from it.** Atomic notes are written by a model in its
+  own words, which costs tokens per doc and loses the exact member names, test ids and rubric
+  wording a course project is graded on. A section is copied as written, so the import is free
+  and exact. The Zettelkasten keeps its atomic notes; docs are a separate layer, type `reference`,
+  in `refs/<project>/`.
+- **Cut at headings, to fit the embedder.** A section is the largest heading-bounded part under
+  1,600 characters (about 400 tokens), inside bge-small's 512, so all of it is embedded. A
+  section with no headings left is cut between paragraphs; a long table repeats its header row in
+  each part; a short intro rides with the first subsection. Each section's title carries its
+  heading path ("Chat501 MS-03 class contract: Complete members / C3 ChatClient"), which is what
+  makes it findable by keyword.
+- **Not notes, so kept out of note maintenance.** References skip the duplicate check (a note
+  about a class shouldn't be held as a duplicate of the spec), clustering, topic and project
+  maps, orphan counts and the long-note check on contents notes. They are searched like notes.
+- **Kept in sync like maps.** Each note records a hash of its text. A re-run rewrites only changed
+  sections that zk generated and nobody edited (`vault.replace`, as for maps), and moves sections
+  that are gone to `refs/retired/`. The options are remembered in `docs.json`, and the
+  session-start hook re-syncs in the background when a doc's size or time changed.
+- **Reads of long docs go through the sections, once.** The brief in the project lists its docs.
+  The Read hook turns back the first whole-file read of a doc over 1,500 tokens in a session, with
+  the contents note and the search to use, through Claude Code's PreToolUse deny with a reason.
+  A second read, or a read of part of the file, goes ahead, so the agent is never stuck; a doc
+  changed since the import is never turned back. A context line alone would arrive with the file
+  already read, too late to save anything.
+- **PDFs through Poppler, if installed.** No new Python dependency: `pdftotext` is called when it
+  is on PATH or configured. A PDF with a Markdown twin is skipped, as it was rendered from it.
+- **Defaults for chat501.** The prompt log (37k tokens of prompt history), the D1 transcript (it
+  may quote people outside the group), the UML PDFs (mostly diagram labels) and the rendered PDF
+  deliverables are skipped with `--skip`; the rest is imported.
