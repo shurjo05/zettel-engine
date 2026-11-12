@@ -574,7 +574,8 @@ agent's note suggestions to zk's inbox. For that it needs a few zk names it can 
 
 - **One module, `zk.api`, is the contract.** Everything else stays internal. `docs/api.md` lists
   the names, and `tests/test_api.py` pins them, so a refactor inside zk can't silently break a
-  caller. Callers pin a version tag; this is the first one, `v0.13.0`.
+  caller. Callers track zk's main branch and lock the exact commit rather than a version tag
+  (Shurjo, 2026-11-12): zk keeps changing, and the pinned tests are what keep the contract.
 - **Mount, don't proxy.** `add_knowledge_tools` registers the same tool functions on another
   `MCPServer`, in the same process. Proxying `zk serve` would mean a second process, double
   serialization and an MCP client to maintain. Re-implementing the tools would let them drift. A
