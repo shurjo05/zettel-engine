@@ -25,7 +25,9 @@ Read README.md first. Then:
   the index. `calibrate.py` reads the index and the vault's git log and writes only its label
   files in `eval/calibration/`, through `vault.py`. `agent.py` runs a one-shot headless Claude
   with the `[zk]` marker; anything sent through it must have a row in `docs/data-flow.md`. `checks.py` reads the vault and the index and writes only the score
-  history file next to the index.
+  history file next to the index. `api.py` is the public API (docs/api.md): it may refresh the
+  index like `cli.py`, and its only vault write is a new inbox capture through `vault.py`; keep
+  its names stable and pinned by `tests/test_api.py`.
 - Retrieval changes must be judged with `zk eval`; report before and after numbers in the PR.
 - Tests must use copies of `tests/fixtures/vault` (the `vault` fixture), never a real vault.
 - Fixture notes are synthetic; never commit personal vault content.

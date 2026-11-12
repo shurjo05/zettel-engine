@@ -62,6 +62,13 @@ Write zero to five notes on what is reusable from it: how the project is built (
 and the patterns it uses), decisions it shows, and problems its commits show were solved. Skip
 what any project of that kind has. Its notes are recorded under that project automatically.
 
+A capture whose source starts with codex: holds note suggestions from a coding agent, written
+after a task: each has a title, a type, a one or two sentence claim, the evidence from the task,
+and when someone would look for it again. They are suggestions, not notes. Keep only those that
+pass the one-month test and that no existing note covers (search_notes and check_duplicates, as
+for any capture); split a suggestion that holds two ideas into two notes; write each note in your
+own words with its own test questions. Discarding the whole capture is fine when nothing passes.
+
 Notes held as likely duplicates are resolved one at a time: list_held, then get_held_pair. If the
 held note states the same idea as the closest note (a reworded or narrower version of it), call
 merge_held with a merged note that keeps everything the existing note says and adds only what the
@@ -76,15 +83,13 @@ WRITES = ToolAnnotations(
 _EXPECTED = (LookupError, ValueError, FileNotFoundError, InvalidProposal, VaultWriteError)
 
 
-def create_server(
-    vault: Path,
-    db: Path,
-    excludes: Iterable[str],
-    embedder: Embedder | None = None,
-    allow_writes: bool = False,
-) -> MCPServer:
-    vault = vault.resolve()
-    excludes = tuple(excludes)
+Runner = Callable[..., str]
+
+
+def _make_runner(
+    vault: Path, db: Path, excludes: tuple[str, ...], embedder: Embedder | None
+) -> Runner:
+    """Each tool call refreshes the index, runs `fn` on it and returns compact JSON."""
     lock = threading.Lock()  # tools run in worker threads; refresh one at a time
 
     def run(fn: Callable[[sqlite3.Connection], object], embed: bool = False) -> str:
@@ -100,10 +105,52 @@ def create_server(
             finally:
                 conn.close()
 
+    return run
+
+
+def create_server(
+    vault: Path,
+    db: Path,
+    excludes: Iterable[str],
+    embedder: Embedder | None = None,
+    allow_writes: bool = False,
+) -> MCPServer:
+    vault = vault.resolve()
+    excludes = tuple(excludes)
+    run = _make_runner(vault, db, excludes, embedder)
     server = MCPServer(
         "zk", instructions=INSTRUCTIONS + (WRITE_INSTRUCTIONS if allow_writes else "")
     )
+    _add_read_tools(server, run, embedder)
+    if allow_writes:
 
+        def refresh(conn: sqlite3.Connection) -> None:
+            build_index(conn, vault, excludes)
+            if embedder is not None:
+                update_embeddings(conn, embedder)
+
+        _add_ingest_tools(server, vault, run, embedder, refresh, history_path(db))
+    return server
+
+
+def add_knowledge_tools(
+    server: MCPServer,
+    vault: Path,
+    db: Path,
+    excludes: Iterable[str],
+    embedder: Embedder | None = None,
+) -> None:
+    """Add zk's read-only tools to another program's MCP server (zk.api, docs/api.md).
+
+    The tools are the same code `zk serve` runs: search_notes, get_note, get_related,
+    and suggest_links when an embedder is given. No write tool can be added this way.
+    """
+    vault = vault.resolve()
+    excludes = tuple(excludes)
+    _add_read_tools(server, _make_runner(vault, db, excludes, embedder), embedder)
+
+
+def _add_read_tools(server: MCPServer, run: Runner, embedder: Embedder | None) -> None:
     @server.tool(annotations=READ_ONLY, structured_output=False)
     def search_notes(
         query: str,
@@ -170,16 +217,6 @@ def create_server(
         """
         k = max(1, min(k, 50))
         return run(lambda c: lookup.related(c, note, k=k))
-
-    if allow_writes:
-
-        def refresh(conn: sqlite3.Connection) -> None:
-            build_index(conn, vault, excludes)
-            if embedder is not None:
-                update_embeddings(conn, embedder)
-
-        _add_ingest_tools(server, vault, run, embedder, refresh, history_path(db))
-    return server
 
 
 class NoteDraft(BaseModel):
