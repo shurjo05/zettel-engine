@@ -118,19 +118,22 @@ def git_commit(vault: Path, paths: list[str], message: str) -> str | None:
     if not (vault / ".git").exists():
         return None
 
-    def git(*args: str, check: bool = True) -> subprocess.CompletedProcess:
+    def git(*args: str, paths: list[str] | None = None) -> subprocess.CompletedProcess:
+        # Paths go on stdin, not the command line: a run can touch hundreds of files,
+        # more than Windows allows in one command line (32,767 characters).
+        extra = ["--pathspec-from-file=-", "--pathspec-file-nul"] if paths is not None else []
         return subprocess.run(
-            ["git", "-C", str(vault), *args], capture_output=True, text=True, check=check
+            ["git", "-C", str(vault), *args, *extra],
+            input="\0".join(paths) if paths is not None else None,
+            capture_output=True,
+            text=True,
+            check=True,
         )
 
-    known = [
-        p
-        for p in paths
-        if (vault / p).exists()
-        or git("ls-files", "--error-unmatch", "--", p, check=False).returncode == 0
-    ]
+    tracked = set(git("ls-files", "-z").stdout.split("\0"))
+    known = [p for p in dict.fromkeys(paths) if (vault / p).exists() or p in tracked]
     if not known:
         return None
-    git("add", "-A", "--", *known)
-    git("commit", "--quiet", "-m", message, "--only", "--", *known)
+    git("add", "-A", paths=known)
+    git("commit", "--quiet", "-m", message, "--only", paths=known)
     return git("rev-parse", "HEAD").stdout.strip()

@@ -566,6 +566,86 @@ dry run is now redacted too. In the same run, a background `zk process` that sta
 `git pull` finished on the old code and re-created the `repos` map; that was a one-off of updating
 mid-run, so nothing was changed for it.
 
+## 27. A project's docs in the vault, one note per section (2026-11-12)
+
+Shurjo asked for the CIS501 chat501 project's documentation in the vault, "so that working in that
+project doesn't eat up all my context and tokens". The project holds about 125k tokens of unique
+docs (24 Markdown files, 16 PDFs): class contracts, use-case realizations, test specs, a deviation
+log, course specs. An agent answering one question about a class reads the whole 6,000-word
+contract.
+
+- **The doc's own text, not notes written from it.** Atomic notes are written by a model in its
+  own words, which costs tokens per doc and loses the exact member names, test ids and rubric
+  wording a course project is graded on. A section is copied as written, so the import is free
+  and exact. The Zettelkasten keeps its atomic notes; docs are a separate layer, type `reference`,
+  in `refs/<project>/`.
+- **Cut at headings, to fit the embedder.** A section is the largest heading-bounded part under
+  1,600 characters (about 400 tokens), inside bge-small's 512, so all of it is embedded. A
+  section with no headings left is cut between paragraphs; a long table repeats its header row in
+  each part; a short intro rides with the first subsection. Each section's title carries its
+  heading path ("Chat501 MS-03 class contract: Complete members / C3 ChatClient"), which is what
+  makes it findable by keyword.
+- **Not notes, so kept out of note maintenance.** References skip the duplicate check (a note
+  about a class shouldn't be held as a duplicate of the spec), clustering, topic and project
+  maps, orphan counts and the long-note check on contents notes. They are searched like notes.
+- **Kept in sync like maps.** Each note records a hash of its text. A re-run rewrites only changed
+  sections that zk generated and nobody edited (`vault.replace`, as for maps), and moves sections
+  that are gone to `refs/retired/`. The options are remembered in `docs.json`, and the
+  session-start hook re-syncs in the background when a doc's size or time changed.
+- **Reads of long docs go through the sections, once.** The brief in the project lists its docs.
+  The Read hook turns back the first whole-file read of a doc over 1,500 tokens in a session, with
+  the contents note and the search to use, through Claude Code's PreToolUse deny with a reason.
+  A second read, or a read of part of the file, goes ahead, so the agent is never stuck; a doc
+  changed since the import is never turned back. A context line alone would arrive with the file
+  already read, too late to save anything.
+- **PDFs through Poppler, if installed.** No new Python dependency: `pdftotext` is called when it
+  is on PATH or configured. A PDF with a Markdown twin is skipped, as it was rendered from it.
+- **Defaults for chat501.** The prompt log (37k tokens of prompt history), the D1 transcript (it
+  may quote people outside the group), the UML PDFs (mostly diagram labels) and the rendered PDF
+  deliverables are skipped with `--skip`; the rest is imported.
+
+Measured on chat501 (26 docs, 396 sections, 20 questions written while reading the docs and
+labelled with every section that answers), against a copy of the real vault:
+
+| | MRR | answer in top 5 | tokens per answer (median) |
+|---|---|---|---|
+| zk, hybrid | 0.59 | 80% | 1,554 (search alone 813) |
+| zk, semantic | 0.66 | | |
+| zk, keyword | 0.42 | | |
+| open the top 5 in full | | | 4,005 |
+| read the whole doc file | | | 7,317 |
+
+The vault's own 27 test questions: hybrid MRR 0.90 without the docs, 0.92 with them (one
+question moved up a rank, none down); recall@5 1.00 both. Mean search time went from 28 to 51 ms.
+
+Known limits: a question about a class's methods misses, because the class-contract sections are
+signature lines with little prose and the use-case sections describe the same calls in words;
+semantic search alone does better than hybrid on these docs, but hybrid stays the default because
+it is better on the notes, which are what most searches are for. Splitting by structure works for
+headed Markdown; PDFs are cut by page and titled by their first heading-like line.
+
+**Code maps and per-project clusters, tried and left out.** Shurjo asked whether the vault should
+also cover the code, so Claude needn't go through the files. Three versions were measured
+end to end, with 10 questions per project (where is X, what a method takes, how a flow works,
+where to change something), each answered by a fresh headless Claude Sonnet in the project, on
+chat501 (docs-heavy C#) and FinancialAIAssistant (lighter docs, Python and TypeScript):
+
+| total cost, 10 questions (right of 10) | chat501 | FinancialAIAssistant |
+|---|---|---|
+| files only, run 1 | $1.10 (9) | $1.09 (10) |
+| files only, run 2 | $1.17 (9) | $1.03 (9) |
+| doc sections + a code map per source file | $1.29 (10) | $1.01 (9) |
+| the same + model-written cluster notes per component | $1.39 (10) | $1.04 (10) |
+| code maps + "answer from the note, don't open the file" | $1.34 (9) | $1.29 (7) |
+
+Cluster notes cost about $1 per project to build and were never cheaper. Cost follows the number
+of turns, as each turn re-sends Claude Code's own prompt (about 40k tokens, mostly cached), not
+the bytes read: with the vault the agent searched, read the note and still opened the file. Told
+to answer from notes, it searched more and repeated doc text that the code had since changed.
+Code maps were never wrong but came out even with reading files (the two files-only runs differ by
+about 6%). On code, one grep usually lands, so the vault's savings are in long docs and in notes,
+not source files. The code-map implementation is kept on the `code-maps` branch.
+
 ## 28. A public API for programs built on zk (2026-11-12)
 
 tokenmaxxing, Shurjo's separate tool that has Claude hand implementation work to Codex, owns zk

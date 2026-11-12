@@ -10,8 +10,10 @@ Read README.md first. Then:
   `--allow-writes` is given. Only `vault.py` may write vault
   files. It creates or moves files and never deletes; the one write that changes a file,
   `vault.replace`, needs the content hash the caller read. `ingest.py`, `migrate.py` and
-  `resolve.py` write only through it, and only `resolve.merge_held` and `maps.update` (on maps zk generated and nobody has
+  `resolve.py` write only through it, and only `resolve.merge_held`, `maps.update` and `docs.import_docs` (on files zk generated and nobody has
   edited) use `replace`. `maps.py` writes only `maps/` and never deletes: it retires a map by moving it.
+  `docs.py` reads a project's doc files and writes only `refs/` through `vault.py`, using
+  `replace` only on sections zk generated and nobody edited, and retires a section by moving it.
   `maintain.py` only reads the index. `sessions.py` reads agent transcripts and writes only
   captures (through `vault.py`) and its record in the zk data folder. `hooks.py` writes the
   person's agent settings only by adding an entry after a backup, never changing or removing

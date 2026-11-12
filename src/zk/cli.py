@@ -499,6 +499,43 @@ def cmd_learn(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_docs(args: argparse.Namespace) -> int:
+    """Copy a project's docs into the vault, one note per section; re-sync what changed."""
+    from zk import docs
+
+    if not args.vault.is_dir():
+        sys.exit(f"zk: {args.vault} is not a folder")
+    if args.forget:
+        found = docs.forget(args.folder)
+        print(f"zk docs: {'stopped syncing' if found else 'was not syncing'} {args.folder}")
+        return 0
+    try:
+        result = docs.import_docs(
+            args.vault,
+            args.folder,
+            include=args.only or None,
+            exclude=args.skip if args.skip else None,
+            pdftotext=args.pdftotext,
+            project=args.project,
+            dry_run=args.dry_run,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"zk docs: {exc}", file=sys.stderr)
+        return 1
+    if not args.dry_run and (result["new"] or result["updated"] or result["retired"]):
+        conn = _open(args)  # index and embed the sections now, so search finds them
+        try:
+            _embedder(args, conn)
+        finally:
+            conn.close()
+    if not args.quiet:
+        print(docs.format_result(result))
+        if args.dry_run:
+            for rel in result["new"] + result["updated"]:
+                print(f"  {rel}")
+    return 0
+
+
 def cmd_review(args: argparse.Namespace) -> int:
     """The health review: write it to inbox/reports/ (or just print it)."""
     from zk import review
@@ -924,6 +961,28 @@ def main(argv: list[str] | None = None) -> int:
         "--skip", action="store_true", help="never read these projects (also not automatically)"
     )
     p_learn.set_defaults(func=cmd_learn)
+
+    p_docs = sub.add_parser(
+        "docs", help="copy a project's docs into the vault, one note per section (no model)"
+    )
+    _common(p_docs)
+    _model_option(p_docs)
+    p_docs.add_argument("folder", type=Path, help="the project folder")
+    p_docs.add_argument(
+        "--only", action="append", default=[], help="doc files to read (glob; default *.md, *.pdf)"
+    )
+    p_docs.add_argument(
+        "--skip",
+        action="append",
+        default=[],
+        help="doc files to leave out (glob; with a /, it matches the path: docs/uml/*.pdf)",
+    )
+    p_docs.add_argument("--pdftotext", help="path to Poppler's pdftotext, to read PDFs")
+    p_docs.add_argument("--project", help="project name (default: the folder's name)")
+    p_docs.add_argument("--dry-run", action="store_true", help="list the changes, write nothing")
+    p_docs.add_argument("--forget", action="store_true", help="stop syncing this project's docs")
+    p_docs.add_argument("--quiet", action="store_true", help=argparse.SUPPRESS)
+    p_docs.set_defaults(func=cmd_docs)
 
     p_review = sub.add_parser("review", help="the vault health review (no model)")
     _common(p_review)

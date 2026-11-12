@@ -6,7 +6,9 @@ hook_event_name says which hook it is:
   `zk process` in the background to turn the inbox into notes.
 - SessionStart prints the vault brief (recall.brief) as context, and starts
   `zk learn` in the background when the session is in a repository zk hasn't read.
-- PreToolUse on Grep or Glob prints a one-line nudge, once per session.
+- PreToolUse on Grep or Glob prints a one-line nudge, once per session. On Read of a
+  long doc that `zk docs` imported, it turns the read back once, pointing at the doc's
+  sections in the vault.
 - PostToolUseFailure on a shell command prints notes that clearly match the error.
 - UserPromptSubmit prints pointers to notes that clearly match the prompt, if any.
 
@@ -64,14 +66,25 @@ def session_start(vault_dir: Path, event: dict) -> None:
         event.get("source", "startup") == "startup"
         and root is not None
         and root.resolve() != vault_dir.resolve()
-        and not learn.is_known(root)
     ):
-        learn.start(vault_dir, root)
+        from zk import docs
+
+        if not learn.is_known(root):
+            learn.start(vault_dir, root)
+        if docs.stale(root):  # its docs changed since they were put in the vault
+            docs.start(vault_dir, root)
 
 
 def pre_tool(event: dict) -> None:
     from zk import recall
 
+    if event.get("tool_name") == "Read":
+        reason = recall.on_read(event)
+        if reason:
+            decision = {"permissionDecision": "deny", "permissionDecisionReason": reason}
+            out = {"hookSpecificOutput": {"hookEventName": "PreToolUse", **decision}}
+            print(json.dumps(out, ensure_ascii=False))
+        return
     _context("PreToolUse", recall.nudge(event))
 
 

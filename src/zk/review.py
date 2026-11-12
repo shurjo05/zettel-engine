@@ -23,7 +23,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from zk import calibrate, checks, learn, maps, process, recall, vault
+from zk import calibrate, checks, docs, learn, maps, process, recall, vault
 from zk.embed import Embedder
 from zk.evaluate import run_eval
 from zk.index import health_report
@@ -48,7 +48,9 @@ def gather(vault_dir: Path, conn: sqlite3.Connection, embedder: Embedder) -> dic
     )
     record = learn.load_record()
     return {
-        "notes": health.notes - health.by_type.get("map", 0),
+        "notes": health.notes - health.by_type.get("map", 0) - health.by_type.get("reference", 0),
+        "doc_sections": health.by_type.get("reference", 0),
+        "docs_synced": sorted(e["project"] for e in docs.load_record()["projects"].values()),
         "maps": health.by_type.get("map", 0),
         "errors": health.errors,
         "warnings": health.warnings,
@@ -161,6 +163,8 @@ def render(r: dict, now: datetime) -> str:
         ),
         f"- Projects read by zk learn: {', '.join(r['projects_learned']) or 'none'}"
         + (f" ({r['projects_skipped']} kept out)" if r["projects_skipped"] else ""),
+        f"- Project docs: {r.get('doc_sections', 0)} notes (sections and contents), synced for "
+        f"{', '.join(r.get('docs_synced') or []) or 'no project'}",
         "",
     ]
     return "\n".join(lines)
