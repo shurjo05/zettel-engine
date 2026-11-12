@@ -28,9 +28,16 @@ _SECRETS = [
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
     re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),
+    # A secret-named setting and its value, in code, YAML, .env or JSON style. The name may
+    # carry other words (POSTGRES_PASSWORD, JWT_SECRET, SECRET_KEY, db-password).
     re.compile(
-        r"(?i)\b(api[_-]?key|access[_-]?token|secret|password|passwd)\b(\s*[:=]\s*)(['\"]?)[^\s'\"]{6,}\3"
+        r"(?i)(?<![A-Za-z0-9])((?:[A-Za-z0-9]+[_.-])*"
+        r"(?:api[_-]?key|(?:access|auth|refresh|bearer|session|id)[_-]?token|secret|password|"
+        r"passwd|pwd|private[_-]?key|client[_-]?secret)(?:[_.-][A-Za-z0-9]+)*)"
+        r"(['\"]?\s*[:=]\s*)(['\"]?)[^\s'\"()\[\]{},;]{4,}\3"
     ),
+    # A password inside a connection string: scheme://user:password@host.
+    re.compile(r"(\b[a-z][a-z0-9+.-]*://[^\s:/@]+:)([^\s@/]{3,})(@)", re.I),
 ]
 # Harness blocks that wrap or precede what the person typed; not their words.
 _WRAPPERS = re.compile(
@@ -49,12 +56,12 @@ class Turn:
 
 
 def redact(text: str) -> str:
-    for pattern in _SECRETS:
-        if pattern.groups >= 2:
-            text = pattern.sub(lambda m: f"{m.group(1)}{m.group(2)}[REDACTED]", text)
-        else:
-            text = pattern.sub("[REDACTED]", text)
-    return text
+    """Replace likely secrets with [REDACTED], keeping the setting's name for context."""
+    for pattern in _SECRETS[:-2]:
+        text = pattern.sub("[REDACTED]", text)
+    setting, connection = _SECRETS[-2:]
+    text = setting.sub(lambda m: f"{m[1]}{m[2]}[REDACTED]", text)
+    return connection.sub(lambda m: f"{m[1]}[REDACTED]{m[3]}", text)
 
 
 def _text_of(content) -> str:

@@ -35,6 +35,17 @@ def test_secrets_are_redacted():
     assert "sk-ant" not in redact("key sk-ant-abcdefghijklmnopqrstuvwxyz123456 here")
     assert redact("password = hunter2hunter2") == "password = [REDACTED]"
     assert redact("API_KEY: 'abcdef123456'") == "API_KEY: [REDACTED]"
+    # Names with a prefix or suffix, as .env and docker-compose files write them.
+    assert redact("POSTGRES_PASSWORD: s3cretpass") == "POSTGRES_PASSWORD: [REDACTED]"
+    assert redact('DB_PASSWORD="abc12345"') == "DB_PASSWORD=[REDACTED]"
+    assert redact("JWT_SECRET=xyzxyzxyz") == "JWT_SECRET=[REDACTED]"
+    assert redact("SECRET_KEY = 'django-insecure-1234'") == "SECRET_KEY = [REDACTED]"
+    assert (
+        redact("url postgres://app:hunter22@db:5432/x") == "url postgres://app:[REDACTED]@db:5432/x"
+    )
+    # Code that only mentions such names is left alone.
+    assert redact("def login(password: str) -> bool:") == "def login(password: str) -> bool:"
+    assert redact("max_tokens: 1000") == "max_tokens: 1000"
     assert redact("token AKIAABCDEFGHIJKLMNOP end") == "token [REDACTED] end"
     pem = "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----"
     assert redact(f"x {pem} y") == "x [REDACTED] y"

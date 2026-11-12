@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -52,6 +53,8 @@ MAX_ROUNDS = 10
 # Windows, or one racing a `uv sync`, can take longer, and the agent then runs without
 # its zk tools, so headless runs allow two minutes (MCP_TIMEOUT, in milliseconds).
 MCP_START_MS = "120000"
+# What Claude Code prints when the account's usage limit stops a headless run.
+_USAGE_LIMIT = re.compile(r"(?i)hit your (?:session |usage |weekly )?limit|usage limit reached")
 BATCH_CAPTURES = 3  # captures per ingest run, so a backlog is read a few at a time
 BATCH_CHARS = 120_000  # ...and at most this much text per run (one capture always goes)
 
@@ -100,7 +103,7 @@ class Lock:
             try:
                 fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             except FileExistsError:
-                if time.time() - self.path.stat().st_mtime > STALE_LOCK:
+                if _holder_gone(self.path) or time.time() - self.path.stat().st_mtime > STALE_LOCK:
                     self.path.unlink(missing_ok=True)  # zk's own lock file, not vault content
                     continue
                 raise Busy(f"another zk process is running ({self.path})") from None
@@ -111,6 +114,40 @@ class Lock:
 
     def __exit__(self, *exc):
         self.path.unlink(missing_ok=True)
+
+
+def _holder_gone(path: Path) -> bool:
+    """Whether the process that took the lock has ended (so the lock was left by a crash)."""
+    try:
+        pid = int(path.read_text(encoding="utf-8").split()[0])
+    except (OSError, ValueError, IndexError):
+        return False  # being written, or unreadable: trust the age check instead
+    return not pid_running(pid)
+
+
+def pid_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+            return bool(ok) and code.value == 259  # STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)  # signal 0 only checks; on Windows os.kill would end the process
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def lock_path() -> Path:
@@ -212,6 +249,8 @@ def run(
         "ingest_runs": 0,
         "resolve_runs": 0,
         "stalled": [],
+        "processed": 0,
+        "reason": None,
     }
     with Lock(lock_path()), log_path.open("a", encoding="utf-8") as log:
         log.write(f"zk process {vault_dir} at {now.isoformat(timespec='seconds')}\n")
@@ -233,13 +272,23 @@ def run(
             tried |= set(batch)
             os.utime(lock_path())  # still running: keep the lock from looking stale
             log.write(f"ingest: {len(batch)} of {len(waiting)} capture(s) in the inbox\n")
+            log.flush()
+            start = log_path.stat().st_size
             _run(_with_captures(commands["ingest"], batch), vault_dir, log)
             summary["ingest_runs"] += 1
             left = sorted(set(batch) & {c["name"] for c in list_inbox(vault_dir)})
+            summary["processed"] += len(batch) - len(left)
+            if _USAGE_LIMIT.search(_since(log_path, start)):
+                # The account's usage limit, not the captures: nothing more can run now.
+                summary["stalled"] = left
+                summary["reason"] = "usage limit"
+                log.write("stopped: Claude's usage limit was reached; the next run picks up\n")
+                break
             if left == sorted(batch):
                 # Not one capture was processed: the agent couldn't work (its zk tools
                 # didn't start, a login expired). Stop rather than spend more runs.
                 summary["stalled"] = left
+                summary["reason"] = "no progress"
                 log.write(
                     f"ingest made no progress: {len(left)} capture(s) still in the inbox; "
                     "stopping (see the agent's output above)\n"
@@ -255,7 +304,7 @@ def run(
             # Notes held earlier (or a resolve that failed) still get resolved.
             _run(commands["resolve"], vault_dir, log)
             summary["resolve_runs"] += 1
-        if summary["ingest_runs"] or summary["resolve_runs"]:
+        if summary["processed"] or summary["resolve_runs"]:  # only when the vault changed
             try:
                 refresh_maps(vault_dir, log)
                 summary["maps"] = True
@@ -268,11 +317,21 @@ def run(
             "finished": True,
             "ok": not summary["stalled"],
             "stalled": len(summary["stalled"]),
+            "reason": summary["reason"],
             "waiting": len(list_inbox(vault_dir)),
             "log": str(log_path),
         }
     )
     return summary
+
+
+def _since(path: Path, offset: int) -> str:
+    try:
+        with path.open("rb") as f:
+            f.seek(offset)
+            return f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
 
 
 def _save_status(status: dict) -> None:

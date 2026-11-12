@@ -128,7 +128,9 @@ uv run zk capture path/to/vault --text "an idea" --source codex
 From a transcript it keeps your messages and the assistant's replies and drops tool calls, tool
 output, thinking and subagents. Sessions with fewer than two of your messages are skipped, long ones
 keep their first and last 20,000 characters, and common secret formats (API keys, tokens, private
-keys, `password=...`) are replaced with `[REDACTED]`.
+keys, settings such as `password=...` or `POSTGRES_PASSWORD: ...`, passwords in connection URLs)
+are replaced with `[REDACTED]`, and again whenever a capture is read, so older captures pass the
+current filter too.
 
 To capture sessions without being asked, install the session-end hook (see
 [Running on its own](#running-on-its-own)).
@@ -234,8 +236,11 @@ uv run zk hooks status C:\path\to\vault
 
 Logs go to the zk data folder's `logs/`. A run whose agent processes none of its captures (for
 example because its zk server didn't start) stops, exits with code 1, and is listed in the weekly
-review, as is a run that never finished; `process-status.json` beside the logs records the last
-run. The headless agents bring their own write-enabled zk
+review, as is a run that never finished. A run that hits Claude's usage limit stops at once and
+says so; the next run picks up. `process-status.json` beside the logs records the last run. Map
+notes are refreshed only when a run changed the vault. A lock whose run has ended (a crash) is
+taken over at once. A capture set aside as not worth keeping gets its reason in the vault's
+commit message. The headless agents bring their own write-enabled zk
 server (`--mcp-config`, and only that server), so the one registered for everyday sessions on the
 first line stays read-only: sessions don't load the write tools or their instructions, and can't
 write notes. Both installs warn when it's missing or registered with `--allow-writes`, and
@@ -275,7 +280,8 @@ cheaply, at a few points, and Claude opens more only when it needs it:
    edit it as you like.
 7. **Past projects**, `zk learn VAULT FOLDER...`. A free first pass, with no model, reads the
    folder tree, README, manifests, recent commit subjects and the class and function names in each
-   source file, skipping dependencies, build output and likely secret files, and saves it as an
+   source file, skipping dependencies, build output, likely secret files and data (images, model
+   weights, archives, and any folder of 100 or more files of one kind), and saves it as an
    inbox capture. The next ingest turns it into notes on how the project is built, so reading a
    project costs no extra model call. File hashes are remembered, so a later run reads only what
    changed. A session that starts in a repository zk hasn't read starts this in the background.
@@ -285,7 +291,8 @@ cheaply, at a few points, and Claude opens more only when it needs it:
    `inbox/reports/`. No model.
 
 Notes recorded from a project's sessions or `zk learn` get a `project:<name>` source, and
-`search_notes` takes `project` to keep to one.
+`search_notes` takes `project` to keep to one. A folder that holds projects (`repos`, `source`,
+`Documents`, `GitHub` and the like) is not taken for a project.
 
 ### Importing a legacy vault
 

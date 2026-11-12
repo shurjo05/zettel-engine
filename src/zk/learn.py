@@ -57,6 +57,14 @@ CODE = {
     ".js": "c", ".jsx": "c", ".cpp": "c", ".cc": "c", ".c": "c", ".h": "c", ".hpp": "c",
     ".swift": "c", ".go": "go", ".rs": "rust", ".ipynb": "notebook",
 }  # fmt: skip
+# Datasets and model files: counted per folder, never read.
+DATA_SUFFIXES = {
+    ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp", ".heic", ".mp4", ".avi",
+    ".mov", ".mkv", ".wav", ".mp3", ".npy", ".npz", ".pt", ".pth", ".onnx", ".engine", ".h5",
+    ".hdf5", ".ckpt", ".pkl", ".pickle", ".bag", ".db3", ".mcap", ".zip", ".tar", ".gz", ".7z",
+    ".weights", ".safetensors", ".bin", ".parquet", ".tfrecord", ".pcd", ".ply",
+}  # fmt: skip
+DATA_RUN = 100  # this many files of one non-code type in one folder are data (labels, CSVs)
 README_CHARS = 3000
 MANIFEST_CHARS = 1500
 MAX_FILES = 4000  # files walked
@@ -114,13 +122,28 @@ def _matches(name: str, patterns: tuple[str, ...]) -> bool:
     return any(fnmatch.fnmatch(name.lower(), p.lower()) for p in patterns)
 
 
-def walk(root: Path) -> list[Path]:
-    """The project's files, without build output, dependencies or likely secrets."""
+def walk(root: Path, data: dict[str, int] | None = None) -> list[Path]:
+    """The project's files, without build output, dependencies, likely secrets or data.
+
+    Data (images, recordings, model weights, archives, or a hundred-plus files of one
+    non-code type in a folder, like dataset labels) is counted in `data` by folder,
+    not listed, so a dataset can't use up MAX_FILES before the source is reached.
+    """
     out: list[Path] = []
     for folder, dirs, files in os.walk(root):
         dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS and not d.startswith("."))
+        kinds: dict[str, int] = {}
+        for name in files:
+            suffix = Path(name).suffix.lower()
+            kinds[suffix] = kinds.get(suffix, 0) + 1
         for name in sorted(files):
             if _matches(name, SECRET_FILES):
+                continue
+            suffix = Path(name).suffix.lower()
+            if suffix in DATA_SUFFIXES or (suffix not in CODE and kinds[suffix] >= DATA_RUN):
+                if data is not None:
+                    rel = Path(folder).relative_to(root).as_posix()
+                    data[rel] = data.get(rel, 0) + 1
                 continue
             out.append(Path(folder) / name)
             if len(out) >= MAX_FILES:
@@ -176,17 +199,25 @@ def _read(path: Path) -> str | None:
         return None
 
 
-def _tree(root: Path, files: list[Path], depth: int = 2) -> str:
-    """Folders to `depth`, with how many files each holds."""
+def _tree(root: Path, files: list[Path], depth: int = 2, data: dict[str, int] | None = None) -> str:
+    """Folders to `depth`, with how many files each holds (and data files, if any)."""
     counts: dict[str, int] = {}
-    for f in files:
-        parts = f.relative_to(root).parts[:-1][:depth]
-        for i in range(1, len(parts) + 1):
+    data_counts: dict[str, int] = {}
+
+    def add(target: dict[str, int], parts: tuple[str, ...], n: int) -> None:
+        for i in range(1, len(parts[:depth]) + 1):
             key = "/".join(parts[:i])
-            counts[key] = counts.get(key, 0) + 1
-    return "\n".join(
-        f"{'  ' * k.count('/')}{k.rsplit('/', 1)[-1]}/ ({n})" for k, n in sorted(counts.items())
-    )
+            target[key] = target.get(key, 0) + n
+
+    for f in files:
+        add(counts, f.relative_to(root).parts[:-1], 1)
+    for folder, n in (data or {}).items():
+        add(data_counts, tuple(p for p in folder.split("/") if p not in ("", ".")), n)
+    lines = []
+    for k in sorted(set(counts) | set(data_counts)):
+        extra = f", {data_counts[k]} data files" if data_counts.get(k) else ""
+        lines.append(f"{'  ' * k.count('/')}{k.rsplit('/', 1)[-1]}/ ({counts.get(k, 0)}{extra})")
+    return "\n".join(lines)
 
 
 def _commits(root: Path) -> list[str]:
@@ -208,7 +239,8 @@ def scan(root: Path, previous: dict[str, str] | None = None) -> tuple[str, dict[
     With `previous` hashes, only changed and new source files are listed.
     """
     root = root.resolve()
-    files = walk(root)
+    data: dict[str, int] = {}
+    files = walk(root, data)
     hashes: dict[str, str] = {}
     texts: dict[str, str] = {}
     for f in files:
@@ -226,7 +258,9 @@ def scan(root: Path, previous: dict[str, str] | None = None) -> tuple[str, dict[
         if removed:
             parts.append("Removed: " + ", ".join(removed[:50]))
     else:
-        parts.append(f"Folders (files in each):\n{_tree(root, files)}")
+        parts.append(f"Folders (files in each):\n{_tree(root, files, data=data)}")
+        if data:
+            parts.append(f"Data files not read: {sum(data.values())}")
         readme = next(
             (r for r in texts if r.lower() in ("readme.md", "readme.rst", "readme.txt", "readme")),
             None,

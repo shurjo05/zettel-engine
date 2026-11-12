@@ -85,6 +85,11 @@ def advice(r: dict) -> list[str]:
             f"The last zk process run ({last.get('at')}) never finished: it was stopped partway. "
             f"Its log, {last.get('log')}, shows how far it got."
         )
+    elif last and last.get("reason") == "usage limit":
+        out.append(
+            f"The last zk process run ({last.get('at')}) stopped at Claude's usage limit; "
+            "the next run picks up the rest."
+        )
     elif last and not last.get("ok", True):
         out.append(
             f"The last zk process run ({last.get('at')}) processed none of its captures, so "
