@@ -34,9 +34,7 @@ Start with search_notes; its hits carry summaries, which often answer the questi
 Open a note with get_note only when you need its full text, and use get_related to follow links
 and shared tags. Map notes (type map) list the notes on one topic or one project with a line each;
 get_note opens a map by name, and search_notes can keep to one project. Name notes by the id or
-path a tool returned. Reference notes (type reference) are a project's own doc sections and code
-maps, kept in sync with its files: when one answers, answer from it rather than opening the file.
-All tools are read-only.
+path a tool returned. All tools are read-only.
 """
 
 WRITE_INSTRUCTIONS = """
