@@ -5,8 +5,9 @@ internal and can change in any release. `tests/test_api.py` pins how they behave
 is tokenmaxxing, which mounts zk's tools in its own MCP server and turns a coding agent's note
 suggestions into inbox captures.
 
-Depend on a tagged version, for example
-`zettel-engine @ git+https://github.com/shurjo05/zettel-engine@v0.13.0`.
+Callers depend on the main branch (`zettel-engine @ git+https://github.com/shurjo05/zettel-engine`)
+and record the exact commit in their lock file. That's safe because these names are the contract:
+a change that would break them must change `tests/test_api.py` too, which makes it visible in review.
 
 | Name | What it does |
 | --- | --- |
