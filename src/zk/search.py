@@ -42,6 +42,9 @@ DEFAULT_MODE = "hybrid"
 FUSION_DEPTH = 50
 
 
+REFERENCE_SUMMARY = 240  # characters of a doc section's start shown in search results
+
+
 @dataclass
 class Hit:
     rank: int
@@ -54,7 +57,12 @@ class Hit:
     snippet: str
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        out = asdict(self)
+        if self.type == "reference" and len(self.summary) > REFERENCE_SUMMARY:
+            # A doc section's first paragraph can be a whole table or code block; the
+            # title says what the section is, and get_note opens it.
+            out["summary"] = self.summary[:REFERENCE_SUMMARY].rsplit(" ", 1)[0] + " ..."
+        return out
 
 
 def fts_query(text: str) -> str | None:

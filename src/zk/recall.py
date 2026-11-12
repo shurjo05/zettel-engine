@@ -210,7 +210,18 @@ def brief(
             f"It also holds {sections} sections of {len(docs)} project docs (type reference), "
             "each a doc's own text, so a search returns the part of a doc that answers."
         )
-    current_docs = [d for d in docs if current and same_project(current, str(d.get("project")))]
+    if docs and cwd:
+        from zk import docs as project_docs
+
+        imported_as = project_docs.project_in(cwd)  # `zk docs --project` may name it otherwise
+    else:
+        imported_as = None
+    current_docs = [
+        d
+        for d in docs
+        if d.get("project") == imported_as
+        or (current and same_project(current, str(d.get("project"))))
+    ]
     if current_docs:
         project = current_docs[0].get("project")
         lines.append(

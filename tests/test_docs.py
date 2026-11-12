@@ -75,9 +75,20 @@ def test_markdown_is_cut_at_headings_into_sections_that_fit():
     assert "# a comment, not a heading" in example.text  # code fences aren't cut at '#'
 
 
+def test_a_long_code_block_is_closed_and_reopened_across_parts():
+    code = "\n".join(f"Method{i}(name: string, password: string): bool" for i in range(80))
+    sections = docs.split_markdown(f"# Contract\n\n## S2 ChatService\n\n```text\n{code}\n```", "c")
+    assert len(sections) > 2
+    for s in sections:
+        assert s.text.count("```") % 2 == 0, s.text[:80]  # every part's fences pair up
+    assert "password: string" in docs.capture.redact(sections[0].text)  # a type, not a secret
+
+
 def test_pdf_text_is_cut_by_page():
     sections = docs.split_pdf_text(f"{para(20, 1)}\f\f{para(20, 2)}", "Spec")
-    assert [s.path for s in sections] == [["Spec", "page 1"], ["Spec", "page 3"]]
+    labels = [s.path[1] for s in sections]  # titled by page and the page's first line
+    assert [lb.split(":")[0] for lb in labels] == ["page 1", "page 3"]
+    assert labels[1].removeprefix("page 3: ").startswith(para(20, 2)[:20])
 
 
 def test_doc_files_skip_build_output_agent_files_twins_and_skipped_paths(project):
@@ -95,8 +106,8 @@ def test_import_writes_sections_once_and_rewrites_only_what_changed(git_vault, p
     refs = git_vault / "refs" / "chat501"
     readme = (refs / "readme--intro.md").read_text(encoding="utf-8")
     assert "devpass123" not in readme and "[REDACTED]" in readme
-    contents = (refs / "docs-design-class-contract--contents.md").read_text(encoding="utf-8")
-    assert "[[docs-design-class-contract--c1-chat1controller-member-0]]" in contents
+    contents = (refs / "class-contract--contents.md").read_text(encoding="utf-8")
+    assert "[[class-contract--c1-chat1controller-member-0]]" in contents
     log = subprocess.run(
         ["git", "-C", str(git_vault), "log", "-1", "--format=%s"], capture_output=True, text=True
     ).stdout
@@ -110,17 +121,17 @@ def test_import_writes_sections_once_and_rewrites_only_what_changed(git_vault, p
     text = text[:member] + "Rewritten. " + text[member:]
     text = text.replace("## Example", "## Usage example")
     doc.write_text(text, encoding="utf-8")
-    edited = refs / "docs-design-class-contract--c1-chat1controller-member-0.md"
+    edited = refs / "class-contract--c1-chat1controller-member-0.md"
     edited.write_text(edited.read_text(encoding="utf-8") + "\nMy own note.\n", encoding="utf-8")
     again = _import(git_vault, project)
     assert again["updated"] == [
-        "refs/chat501/docs-design-class-contract--contents.md",
-        "refs/chat501/docs-design-class-contract--c3-chat3controller-member-1.md",
+        "refs/chat501/class-contract--contents.md",
+        "refs/chat501/class-contract--c3-chat3controller-member-1.md",
     ]
-    assert "refs/chat501/docs-design-class-contract--usage-example.md" in again["new"]
-    assert again["retired"] == ["refs/chat501/docs-design-class-contract--example.md"]
+    assert "refs/chat501/class-contract--usage-example.md" in again["new"]
+    assert again["retired"] == ["refs/chat501/class-contract--example.md"]
     retired = git_vault / "refs" / "retired" / "chat501"
-    assert (retired / "docs-design-class-contract--example.md").exists()
+    assert (retired / "class-contract--example.md").exists()
     assert "My own note." in edited.read_text(encoding="utf-8")  # an edited section is left alone
 
 
@@ -133,7 +144,7 @@ def test_sections_are_searchable_but_not_notes(git_vault, project, embedder):
     assert not any(i["path"].startswith("refs/") for i in health.issues)
     assert not any(p.startswith("refs/") for p in health.orphans)
     hits = search(conn, "Member 1 Chat3Controller", mode="keyword", project="chat501", k=3)
-    assert hits[0].path.startswith("refs/chat501/docs-design-class-contract--c3")
+    assert hits[0].path.startswith("refs/chat501/class-contract--c3")
     body = (git_vault / hits[0].path).read_text(encoding="utf-8")
     duplicates = similar_notes(conn, embedder, body)
     assert not any(h.path.startswith("refs/") for h in duplicates)  # dedup ignores docs
@@ -143,6 +154,11 @@ def test_sections_are_searchable_but_not_notes(git_vault, project, embedder):
     )
     brief = recall.brief(conn, project)
     assert 'search_notes(query, project="chat501")' in brief
+    renamed = project.with_name("cis501-chat501-group-2")  # folder named otherwise
+    project.rename(renamed)
+    docs.import_docs(git_vault, renamed, exclude=["docs/uml/*.pdf"], project="chat501")
+    assert 'project="chat501"' in recall.brief(conn, renamed / "docs")
+    renamed.rename(project)
     assert "docs/design/class-contract.md:" in brief
     report = context.run_context(
         conn,
@@ -212,3 +228,17 @@ def test_a_session_starting_in_a_project_re_syncs_docs_that_changed(
     assert ("docs", project.resolve()) in no_background_work or ("docs", project) in (
         no_background_work
     )
+
+
+def test_a_commit_of_hundreds_of_files_fits_any_command_line(git_vault):
+    from zk import vault
+
+    names = [f"refs/many/{'section-with-a-long-name-' * 3}{i:04d}.md" for i in range(500)]
+    assert sum(len(n) + 1 for n in names) > 32_767  # past Windows' command-line limit
+    for name in names:
+        vault.write_new(git_vault, name, "---\ntype: reference\n---\n# x\n")
+    assert vault.git_commit(git_vault, names, "zk: many")
+    listed = subprocess.run(
+        ["git", "-C", str(git_vault), "ls-files", "refs/many"], capture_output=True, text=True
+    ).stdout.split()
+    assert len(listed) == 500

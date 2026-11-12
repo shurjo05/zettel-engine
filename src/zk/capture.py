@@ -34,7 +34,12 @@ _SECRETS = [
         r"(?i)(?<![A-Za-z0-9])((?:[A-Za-z0-9]+[_.-])*"
         r"(?:api[_-]?key|(?:access|auth|refresh|bearer|session|id)[_-]?token|secret|password|"
         r"passwd|pwd|private[_-]?key|client[_-]?secret)(?:[_.-][A-Za-z0-9]+)*)"
-        r"(['\"]?\s*[:=]\s*)(['\"]?)[^\s'\"()\[\]{},;]{4,}\3"
+        r"(['\"]?\s*[:=]\s*)(['\"]?)"
+        # Not a type in a signature (`password: string)`): a known type name, or a value
+        # followed by anything but a space, quote or separator, is left alone.
+        r"(?!(?:string|str|securestring|int|bool|boolean|char|byte|bytes|object|any|number|"
+        r"optional|none|null|undefined)\b)"
+        r"[^\s'\"()\[\]{},;]{4,}\3(?![^\s'\",;}\]])"
     ),
     # A password inside a connection string: scheme://user:password@host.
     re.compile(r"(\b[a-z][a-z0-9+.-]*://[^\s:/@]+:)([^\s@/]{3,})(@)", re.I),

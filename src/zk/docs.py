@@ -53,7 +53,7 @@ MIN_CHARS = 200  # an intro shorter than this joins the first subsection
 MAX_DOC_BYTES = 2_000_000
 CHARS_PER_TOKEN = 4
 
-_FENCE = re.compile(r"^\s*(```|~~~)")
+_FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 
 
@@ -123,7 +123,12 @@ def _blocks(text: str) -> list[str]:
 
 
 def _cut_block(block: str, limit: int) -> list[str]:
-    """A block too long for one section, cut between lines; a table keeps its header."""
+    """A block too long for one section, cut between lines.
+
+    A table repeats its header row in every part, and a code block cut in the middle
+    is closed at the end of one part and reopened at the start of the next, so each
+    part is valid Markdown on its own.
+    """
     lines = block.split("\n")
     header: list[str] = []
     if (
@@ -132,12 +137,20 @@ def _cut_block(block: str, limit: int) -> list[str]:
         and set(lines[1].strip()) <= set("|-: ")
     ):
         header, lines = lines[:2], lines[2:]
-    parts, current = [], list(header)
+    parts: list[str] = []
+    current = list(header)
+    fence: str | None = None  # the line that opened the code block we're in
     for line in lines:
-        if len("\n".join([*current, line])) > limit and len(current) > len(header):
-            parts.append("\n".join(current))
-            current = list(header)
-        current.append(line[: limit * 2])  # one absurd line can't stall the cut
+        line = line[: limit * 2]  # one absurd line can't stall the cut
+        closing = f"\n{_FENCE.match(fence).group(1)}" if fence else ""
+        if len("\n".join([*current, line])) + len(closing) > limit and len(current) > len(
+            header
+        ) + (1 if fence and current and current[-1] == fence else 0):
+            parts.append("\n".join(current) + closing)
+            current = [*header, fence] if fence else list(header)
+        current.append(line)
+        if _FENCE.match(line):
+            fence = None if fence else line
     if len(current) > len(header):
         parts.append("\n".join(current))
     return parts
@@ -150,7 +163,8 @@ def _pack(text: str, limit: int) -> list[str]:
     for block in _blocks(text):
         pieces = [block] if len(block) <= limit else _cut_block(block, limit)
         for piece in pieces:
-            if current and len(current) + 2 + len(piece) > limit:
+            # A heading or a line of lead-in stays with what follows it, a little over.
+            if current and len(current) + 2 + len(piece) > limit and len(current) >= MIN_CHARS:
                 parts.append(current)
                 current = ""
             current = f"{current}\n\n{piece}" if current else piece
@@ -202,7 +216,10 @@ def split_pdf_text(text: str, title: str, limit: int = MAX_CHARS) -> list[Sectio
         if not page:
             continue
         for i, part in enumerate(_pack(page, limit), 1):
-            label = f"page {page_no}" + (f" part {i}" if i > 1 else "")
+            first = next((ln.strip() for ln in part.split("\n") if ln.strip()), "")
+            if len(first) > 60:
+                first = first[:60].rsplit(" ", 1)[0] + "..."
+            label = f"page {page_no}" + (f" part {i}" if i > 1 else "") + f": {first}"
             out.append(Section([title, label], part))
     return out
 
@@ -271,7 +288,12 @@ def read_doc(path: Path, pdftotext: str | None) -> str | None:
 
 
 def _slug(text: str, limit: int = 60) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:limit].strip("-") or "section"
+    """Lower case and dashes, cut at a word boundary to at most `limit` characters."""
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    if len(slug) > limit:
+        cut = slug[: limit + 1]
+        slug = cut.rsplit("-", 1)[0] if "-" in cut[limit // 2 :] else slug[:limit]
+    return slug.strip("-") or "section"
 
 
 def _hash(text: str) -> str:
@@ -289,7 +311,12 @@ class Planned:
 
 
 def plan_doc(
-    project: str, doc_rel: str, text: str, created: str, is_pdf: bool = False
+    project: str,
+    doc_rel: str,
+    text: str,
+    created: str,
+    is_pdf: bool = False,
+    doc_slug: str | None = None,
 ) -> list[Planned]:
     """The vault notes for one doc: its sections and its contents note."""
     title = Path(doc_rel).stem
@@ -297,7 +324,7 @@ def plan_doc(
     if not sections:
         return []
     doc_title = sections[0].path[0]
-    doc_slug = _slug(Path(doc_rel).with_suffix("").as_posix(), 50)
+    doc_slug = doc_slug or _slug(Path(doc_rel).stem, 50)
     contents_stem = f"{doc_slug}--contents"
     doc_tokens = len(text) // CHARS_PER_TOKEN
     base = {"type": "reference", "project": project, "doc": doc_rel}
@@ -427,6 +454,18 @@ def project_for(path: str | Path) -> tuple[dict, str] | None:
     return None
 
 
+def project_in(folder: str | Path | None) -> str | None:
+    """The project name docs were imported under for a folder (or one it is inside)."""
+    if not folder:
+        return None
+    key = _key(Path(folder))
+    sep = "\\" if os.name == "nt" else "/"
+    for root_key, entry in load_record()["projects"].items():
+        if key == root_key or key.startswith(root_key.rstrip(sep) + sep):
+            return entry.get("project")
+    return None
+
+
 def stale(root: Path) -> bool:
     """Whether an imported project's docs (or the folders holding them) changed since."""
     entry = load_record()["projects"].get(_key(root))
@@ -479,7 +518,11 @@ def import_docs(
     seen_text: dict[str, str] = {}
     files: dict[str, list[float]] = {}
     folders: dict[str, list[float]] = {".": _stamp(root)}
-    for rel in find_docs(root, include, exclude):
+    found = find_docs(root, include, exclude)
+    stems: dict[str, int] = {}
+    for rel in found:
+        stems[_slug(Path(rel).stem, 50)] = stems.get(_slug(Path(rel).stem, 50), 0) + 1
+    for rel in found:
         path = root / rel
         is_pdf = rel.lower().endswith(".pdf")
         text = read_doc(path, pdftotext)
@@ -494,7 +537,10 @@ def import_docs(
             result["duplicates"].append(f"{rel} = {seen_text[digest]}")
             continue
         seen_text[digest] = rel
-        notes = plan_doc(project, rel, text, created, is_pdf)
+        slug = _slug(Path(rel).stem, 50)
+        if stems[slug] > 1:  # two docs share a name (docs/ai/README.md, README.md)
+            slug = _slug(Path(rel).with_suffix("").as_posix(), 70)
+        notes = plan_doc(project, rel, text, created, is_pdf, slug)
         if notes:
             result["docs"] += 1
             result["sections"] += len(notes) - 1
