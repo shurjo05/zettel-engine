@@ -327,6 +327,15 @@ def test_learn_reads_structure_for_free_and_only_changes_later(vault, repo):
     assert "class LeafNet2" in changed and "PhotoViewer" not in changed
 
 
+def test_learn_dry_run_shows_the_redacted_text(vault, repo):
+    (repo / "docker-compose.yml").write_text(
+        "services:\n  db:\n    environment:\n      POSTGRES_PASSWORD: devpass123\n"
+        "      DATABASE_URL: postgresql://app:devpass123@db:5432/app\n"
+    )
+    text = learn.learn(vault, repo, dry_run=True)["text"]
+    assert "docker-compose.yml" in text and "devpass123" not in text
+
+
 def test_learn_skips_the_vault_and_kept_out_projects(vault, repo):
     assert learn.learn(vault, vault)["saved"] is None
     learn.skip(repo)

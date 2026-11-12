@@ -304,8 +304,9 @@ def learn(vault_dir: Path, root: Path, now: datetime | None = None, dry_run: boo
     slug = project_slug(root.name)
     if seen and not changes:
         return {"project": slug, "saved": None, "why": "unchanged since last time"}
-    if dry_run:
-        return {"project": slug, "saved": "(dry run)", "why": f"{changes} files", "text": text}
+    if dry_run:  # redacted as the capture would be, so the preview shows what gets saved
+        preview = capture.redact(text)
+        return {"project": slug, "saved": "(dry run)", "why": f"{changes} files", "text": preview}
     body = capture.render_capture(
         [capture.Turn("user", text)], f"repo:{slug}", now.isoformat(timespec="seconds"), slug
     )
