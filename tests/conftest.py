@@ -79,7 +79,7 @@ def no_claude_calls(monkeypatch):
     """Tests never ask a real Claude Code install about its MCP servers."""
     from zk import hooks
 
-    monkeypatch.setattr(hooks, "server_ready", lambda: (None, "not checked in tests"))
+    monkeypatch.setattr(hooks, "server_ready", lambda name="zk": (None, "not checked in tests"))
 
 
 @pytest.fixture(autouse=True)

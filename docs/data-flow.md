@@ -29,6 +29,7 @@ sends vault content somewhere new.
 | `~/.claude/rules/zk.md` (M12, added by `zk hooks install`) | Nothing | A new file in Claude Code's user rules folder, never overwritten | Its fixed text goes to Anthropic in every session; no vault content |
 | `zk review`, weekly task (M12) | The index, the vault, its git log, `learn.json` | A report in `inbox/reports/`; one git commit | No |
 | Headless runs' MCP config (M12) | Nothing | `zk-agents-mcp.json` in the zk data folder: the command for the write-enabled zk server | No |
+| `zk.api.save_text`, used by tokenmaxxing (2026-11-12) | Text the calling program passes: a coding agent's note suggestions after a task | A new capture in `inbox/`, secrets redacted | Not by this call. The suggestions were written by the coding agent's model (OpenAI for Codex), and the next ingest run sends the capture to its agent's provider (Anthropic), like any capture |
 | `zk serve` (MCP, M3) | The vault (to refresh the index) and the index | SQLite index outside the vault | Yes, the parts an agent asks for: see below |
 
 ### MCP server

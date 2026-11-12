@@ -157,12 +157,12 @@ def test_default_agents_are_marked_and_bring_their_own_write_server(vault):
 
 
 def test_installs_warn_when_sessions_have_no_read_only_zk_server(vault, monkeypatch, capsys):
-    monkeypatch.setattr(hooks, "server_ready", lambda: (False, "no MCP server named zk"))
+    monkeypatch.setattr(hooks, "server_ready", lambda name="zk": (False, "no MCP server named zk"))
     assert main(["hooks", "install", str(vault), "--dry-run"]) == 0
     out = capsys.readouterr().out
     assert "warning: no MCP server named zk" in out
     # Everyday sessions get a read-only server; zk's own runs bring a write-enabled one.
     assert "claude mcp add zk --scope user --" in out and "--allow-writes" not in out
-    monkeypatch.setattr(hooks, "server_ready", lambda: (True, "registered read-only"))
+    monkeypatch.setattr(hooks, "server_ready", lambda name="zk": (True, "registered read-only"))
     assert main(["hooks", "install", str(vault), "--dry-run"]) == 0
     assert "warning" not in capsys.readouterr().out

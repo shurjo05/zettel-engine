@@ -92,23 +92,28 @@ def server_command(vault_dir: Path) -> str:
     )
 
 
-def server_ready() -> tuple[bool | None, str]:
-    """Whether everyday sessions have a read-only zk server; None if Claude can't be asked."""
+def server_ready(name: str = "zk") -> tuple[bool | None, str]:
+    """Whether everyday sessions have a read-only server with zk's tools; None if Claude can't
+    be asked. `name` is the server's name in Claude Code: "zk", or another program's server
+    that mounts zk's tools (zk.api.add_knowledge_tools)."""
     claude = shutil.which("claude")
     if not claude:
         return None, "claude is not on PATH, so it couldn't be checked"
     try:
         done = subprocess.run(
-            [claude, "mcp", "get", "zk"], capture_output=True, text=True, timeout=30
+            [claude, "mcp", "get", name], capture_output=True, text=True, timeout=30
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return None, f"couldn't ask claude ({exc})"
     if done.returncode != 0:
-        return False, "no MCP server named zk is registered, so sessions can't search the vault"
+        return (
+            False,
+            f"no MCP server named {name} is registered, so sessions can't search the vault",
+        )
     if "--allow-writes" in done.stdout:
         return False, (
-            "the zk server is registered with --allow-writes, so every session loads the write "
-            "tools and their instructions; zk's own runs no longer need it"
+            f"the {name} server is registered with --allow-writes, so every session loads the "
+            "write tools and their instructions; zk's own runs no longer need it"
         )
     return True, "registered read-only"
 

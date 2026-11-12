@@ -340,7 +340,7 @@ def cmd_process(args: argparse.Namespace) -> int:
 def cmd_hooks(args: argparse.Namespace) -> int:
     """Install or show zk's Claude Code hooks and rules file."""
     if args.action == "status":
-        return _hooks_status(args.vault)
+        return _hooks_status(args.vault, args.server)
     if args.vault is None or not args.vault.is_dir():
         sys.exit("zk hooks install: give the vault folder")
     try:
@@ -359,11 +359,11 @@ def cmd_hooks(args: argparse.Namespace) -> int:
         print(result["diff"])
     if result.get("backup"):
         print(f"  backup: {result['backup']}")
-    _warn_if_no_server(args.vault)
+    _warn_if_no_server(args.vault, args.server)
     return 0
 
 
-def _hooks_status(vault_dir: Path | None) -> int:
+def _hooks_status(vault_dir: Path | None, server: str = "zk") -> int:
     try:
         found = hooks.installed()
     except ValueError as exc:
@@ -378,8 +378,8 @@ def _hooks_status(vault_dir: Path | None) -> int:
     print(f"rules file: {'installed' if rules.exists() else 'not installed'} ({rules})")
     for name, label in ((hooks.TASK_NAME, "daily catch-up"), (hooks.REVIEW_TASK, "weekly review")):
         print(f"{label}: {'installed' if hooks.schedule_status(name) else 'not installed'}")
-    ready, detail = hooks.server_ready()
-    print(f"zk server for everyday sessions: {detail}")
+    ready, detail = hooks.server_ready(server)
+    print(f"{server} server for everyday sessions: {detail}")
     record = sessions.load_record()
     captures = sorted(
         (v.get("checked", ""), v["capture"]) for v in record.values() if v.get("capture")
@@ -402,8 +402,8 @@ def _hooks_status(vault_dir: Path | None) -> int:
     return 0
 
 
-def _warn_if_no_server(vault_dir: Path) -> None:
-    ready, detail = hooks.server_ready()
+def _warn_if_no_server(vault_dir: Path, server: str = "zk") -> None:
+    ready, detail = hooks.server_ready(server)
     if ready is False:
         print(f"  warning: {detail}. Register a read-only one for everyday sessions with:")
         if "--allow-writes" in detail:
@@ -914,6 +914,12 @@ def main(argv: list[str] | None = None) -> int:
         help="only the session-end capture: no brief, nudge, error notes or rules file",
     )
     p_hooks.add_argument("--dry-run", action="store_true", help="show the change, make none")
+    p_hooks.add_argument(
+        "--server",
+        default="zk",
+        metavar="NAME",
+        help="the MCP server that serves zk's tools to everyday sessions (default: zk)",
+    )
     p_hooks.set_defaults(func=cmd_hooks)
 
     p_schedule = sub.add_parser(
