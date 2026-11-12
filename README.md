@@ -24,7 +24,7 @@ rebuildable index stored outside the vault.
 | M11 | Context efficiency, answer quality with citations (`zk ask`), threshold re-checks (`zk calibrate`) | done |
 | M12 | Notes reach Claude without being asked: map notes, a session brief, a search nudge, notes for failed commands and matching prompts, reading past projects (`zk learn`), a weekly review | done |
 | M13 | Vector search inside SQLite with sqlite-vec, NumPy as the fallback | done |
-| M14 | A project's docs in the vault, one note per section (`zk docs`), and reads of long docs pointed at the section that answers | in progress |
+| M14 | A project's docs in the vault, one note per section, and a code map per source file (`zk docs`), and reads of long docs pointed at the section that answers | in progress |
 
 ## Setup
 
@@ -313,6 +313,12 @@ uv run zk docs C:\path\to\vault C:\path\to\project --skip "docs/uml/*.pdf" --ski
   folders, likely secret files, the `CLAUDE.md` and `AGENTS.md` that agents load anyway, a PDF
   with a Markdown file of the same name (it was rendered from it), or a second copy of a doc.
   Secrets are redacted as in captures.
+- **Code maps**: each source file (C#, Java, Kotlin, C/C++, JavaScript, TypeScript, Swift, Go,
+  Rust, Python) also gets a note listing what it declares: classes, member signatures, the
+  comments above them, attributes and requirement ids like `R-08`, but no method bodies. A search
+  finds the file that implements something, and Claude opens only that file. A map changes only
+  when a declaration does. Generated files (designer files, migrations, bundles) are skipped;
+  `--no-code` leaves code out.
 - **Where it goes**: `refs/<project>/`, one note per section plus a contents note per doc, type
   `reference`. Search finds them like notes; `search_notes(..., project=...)` keeps to one
   project. They are not atomic notes, so duplicate checks, clustering, maps and orphan counts
