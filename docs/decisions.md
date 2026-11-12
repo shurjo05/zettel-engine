@@ -559,3 +559,9 @@ through the backlog, turned up six faults. Each fix is small and keeps the earli
   vault commit, so `git log` shows why each one was set aside. Copies of one session are ingested
   once and the copy discarded with a reason naming the notes that cover it.
 
+
+Found on the next run (2026-11-12): `zk learn --dry-run` printed the scanned text before redaction,
+although the saved capture was redacted. A preview should show exactly what would be saved, so the
+dry run is now redacted too. In the same run, a background `zk process` that started before
+`git pull` finished on the old code and re-created the `repos` map; that was a one-off of updating
+mid-run, so nothing was changed for it.
