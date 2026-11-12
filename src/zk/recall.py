@@ -256,7 +256,8 @@ def brief(
         lines.append(
             f"The vault has code maps of {mapped[1]} of this project's source files (classes, "
             f'signatures, comments, requirement ids): search_notes("<what you need>", '
-            f'project="{mapped[0]}") finds the file that declares it, so you read only that file.'
+            f'project="{mapped[0]}") finds what a file declares. Answer from a map or doc section '
+            "when it answers; open a file only for code you need to read or change."
         )
     if here:
         name, project, body = here
