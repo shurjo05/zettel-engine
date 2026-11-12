@@ -603,3 +603,23 @@ contract.
 - **Defaults for chat501.** The prompt log (37k tokens of prompt history), the D1 transcript (it
   may quote people outside the group), the UML PDFs (mostly diagram labels) and the rendered PDF
   deliverables are skipped with `--skip`; the rest is imported.
+
+Measured on chat501 (26 docs, 396 sections, 20 questions written while reading the docs and
+labelled with every section that answers), against a copy of the real vault:
+
+| | MRR | answer in top 5 | tokens per answer (median) |
+|---|---|---|---|
+| zk, hybrid | 0.59 | 80% | 1,554 (search alone 813) |
+| zk, semantic | 0.66 | | |
+| zk, keyword | 0.42 | | |
+| open the top 5 in full | | | 4,005 |
+| read the whole doc file | | | 7,317 |
+
+The vault's own 27 test questions: hybrid MRR 0.90 without the docs, 0.92 with them (one
+question moved up a rank, none down); recall@5 1.00 both. Mean search time went from 28 to 51 ms.
+
+Known limits: a question about a class's methods misses, because the class-contract sections are
+signature lines with little prose and the use-case sections describe the same calls in words;
+semantic search alone does better than hybrid on these docs, but hybrid stays the default because
+it is better on the notes, which are what most searches are for. Splitting by structure works for
+headed Markdown; PDFs are cut by page and titled by their first heading-like line.
