@@ -163,7 +163,8 @@ def render(r: dict, now: datetime) -> str:
         ),
         f"- Projects read by zk learn: {', '.join(r['projects_learned']) or 'none'}"
         + (f" ({r['projects_skipped']} kept out)" if r["projects_skipped"] else ""),
-        f"- Project docs: {r.get('doc_sections', 0)} notes (sections and contents), synced for "
+        f"- Project docs: {r.get('doc_sections', 0)} notes (doc sections, contents and code "
+        "maps), synced for "
         f"{', '.join(r.get('docs_synced') or []) or 'no project'}",
         "",
     ]

@@ -1,4 +1,4 @@
-"""A project's documentation in the vault, one note per section: `zk docs VAULT FOLDER`.
+"""A project's docs, one note per section, and code maps in the vault: `zk docs VAULT FOLDER`.
 
 A project's own docs (specs, design notes, a course's assignment pages) are long,
 and an agent working in the project reads whole files to find one part. This
@@ -19,6 +19,13 @@ counts leave them out. Every note records a hash of its text; running again
 rewrites only sections that changed and that nobody edited, and moves sections
 that are gone to refs/retired/. Nothing is deleted. One commit per run.
 
+Source files get a code map each (outline.py): the classes and functions a file
+declares, their signatures, the comments above them and any requirement ids, so a
+search finds which file implements something before the agent opens one. Only
+declarations: a map changes when a signature or comment does, not on every edit.
+Generated files (designer files, migrations, bundles) are left out; `--no-code`
+skips code altogether.
+
 What was imported, and with which options, is remembered in the zk data folder,
 so a session starting in the project can re-sync it in the background (hook.py)
 and the Read hook can point at the sections (recall.on_read).
@@ -38,7 +45,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from zk import capture, vault
+from zk import capture, outline, vault
 from zk.index import data_dir
 from zk.learn import SECRET_FILES, SKIP_DIRS, _key
 from zk.search import project_slug
@@ -51,6 +58,9 @@ AGENT_FILES = ("CLAUDE.md", "AGENTS.md", "CLAUDE.local.md")
 MAX_CHARS = 1600  # a section: about 400 tokens, inside the embedder's 512
 MIN_CHARS = 200  # an intro shorter than this joins the first subsection
 MAX_DOC_BYTES = 2_000_000
+CODE_INCLUDE = tuple(f"*{suffix}" for suffix in outline.LANGS)
+MAX_CODE_FILES = 2000
+MAX_CODE_BYTES = 500_000  # bigger source files are generated or data
 CHARS_PER_TOKEN = 4
 
 _FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
@@ -411,6 +421,73 @@ def plan_doc(
     return planned
 
 
+def _about(n: int) -> int:
+    """`n` rounded (to 100s, or two figures above 1,000), so a small edit doesn't change a
+    code map."""
+    return max(100, round(n, -max(2, len(str(n)) - 2)))
+
+
+def plan_code(
+    project: str, rel: str, text: str, created: str, slug: str | None = None
+) -> list[Planned]:
+    """The code map of one source file: its declarations, cut at types if it is long."""
+    found = outline.outline(rel, text)
+    if found is None:
+        return []
+    name = Path(rel).name
+    slug = slug or _slug(Path(rel).stem, 50)
+    tokens = _about(len(text) // CHARS_PER_TOKEN)
+    head = (
+        f"`{rel}` in {project}: {found.language}, about {tokens} tokens. "
+        "Declarations and their comments only; read the file for the code."
+    )
+    if found.summary:
+        head += f"\n\n{found.summary}"
+    if found.ids:
+        head += f"\n\nRequirement ids: {', '.join(found.ids)}."
+    title = f"{name}: code map"
+    sections = split_markdown(f"# {title}\n\n{head}\n\n{outline.markdown(found)}", title)
+    planned: list[Planned] = []
+    taken: set[str] = set()
+    for sec in sections:
+        label = " / ".join(sec.path[1:])
+        stem = f"code--{slug}" + (f"--{_slug(label)}" if len(sections) > 1 and label else "")
+        n = 2
+        while stem in taken:
+            stem, n = f"code--{slug}--{_slug(label)}-{n}", n + 1
+        taken.add(stem)
+        note_title = f"{title} ({label})" if len(sections) > 1 and label else title
+        body = (
+            f"# {note_title}\n\n{capture.redact(sec.text).strip()}\n\n"
+            f"Code map of `{rel}` in {project}.\n"
+        )
+        front = {
+            "id": f"ref-{project}-{stem}",
+            "title": note_title,
+            "type": "reference",
+            "project": project,
+            "doc": rel,
+            "code": True,
+            "section": label or "code map",
+            "file_tokens": tokens,
+            "sources": [f"project:{project}", f"code:{project}/{rel}"],
+            "tags": [],
+            "created": created,
+            "generated": "zk",
+            "body_hash": _hash(body),
+        }
+        planned.append(
+            Planned(f"{REFS_DIR}/{project}/{stem}.md", f"---\n{_front(front)}\n---\n{body}")
+        )
+    return planned
+
+
+def find_code(root: Path, exclude=()) -> list[str]:
+    """Source files under `root`, without generated ones (designer files, minified bundles)."""
+    found = find_docs(root, CODE_INCLUDE, [*exclude, *outline.GENERATED])
+    return found[:MAX_CODE_FILES]
+
+
 def _split_front(text: str) -> tuple[dict, str]:
     if not text.startswith("---\n"):
         return {}, text
@@ -516,8 +593,9 @@ def import_docs(
     project: str | None = None,
     now: datetime | None = None,
     dry_run: bool = False,
+    code: bool | None = None,
 ) -> dict:
-    """Bring refs/<project>/ in line with the project's docs. Returns what changed.
+    """Bring refs/<project>/ in line with the project's docs and code. Returns what changed.
 
     Options not given are taken from the last import of this folder, so a re-sync
     keeps them.
@@ -535,10 +613,11 @@ def import_docs(
     exclude = exclude if exclude is not None else last.get("exclude", [])
     project = project_slug(project or last.get("project") or root.name)
     pdftotext = pdftotext_path(pdftotext or last.get("pdftotext"))
+    code = code if code is not None else last.get("code", True)
     created = now.date().isoformat()
 
     result: dict = {
-        "project": project, "docs": 0, "sections": 0, "new": [], "updated": [],
+        "project": project, "docs": 0, "sections": 0, "code_files": 0, "new": [], "updated": [],
         "retired": [], "edited": [], "unchanged": 0, "skipped": [], "duplicates": [],
     }  # fmt: skip
     planned: list[Planned] = []
@@ -572,6 +651,8 @@ def import_docs(
             result["docs"] += 1
             result["sections"] += len(notes) - 1
             planned += notes
+    if code:
+        planned += _plan_code_files(root, exclude, project, created, files, folders, result)
 
     touched: list[str] = []
     wanted = {p.rel for p in planned}
@@ -634,6 +715,7 @@ def import_docs(
         "include": list(include),
         "exclude": list(exclude),
         "pdftotext": pdftotext,
+        "code": code,
         "files": files,
         "folders": folders,
         "docs": _doc_index(planned),
@@ -641,6 +723,47 @@ def import_docs(
     }
     save_record(record)
     return result
+
+
+def _plan_code_files(
+    root: Path,
+    exclude: list[str],
+    project: str,
+    created: str,
+    files: dict[str, list[float]],
+    folders: dict[str, list[float]],
+    result: dict,
+) -> list[Planned]:
+    """The code maps of a project's source files, noting each file's stamp for re-syncs."""
+    found = find_code(root, exclude)
+    stems: dict[str, int] = {}
+    for rel in found:
+        stems[_slug(Path(rel).stem, 50)] = stems.get(_slug(Path(rel).stem, 50), 0) + 1
+    planned: list[Planned] = []
+    used: set[str] = set()
+    for rel in found:
+        path = root / rel
+        try:
+            if path.stat().st_size > MAX_CODE_BYTES:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        files[rel] = _stamp(path)
+        parent = Path(rel).parent.as_posix()
+        folders[parent] = _stamp(root / parent)
+        slug = _slug(Path(rel).stem, 50)
+        if stems[slug] > 1:  # Program.cs in both the client and the server
+            slug = _slug(rel, 70)
+        base, n = slug, 2
+        while slug in used:
+            slug, n = f"{base}-{n}", n + 1
+        used.add(slug)
+        notes = plan_code(project, rel, text, created, slug)
+        if notes:
+            result["code_files"] += 1
+            planned += notes
+    return planned
 
 
 def _doc_index(planned: list[Planned]) -> dict[str, dict]:
@@ -668,7 +791,8 @@ def forget(root: Path) -> bool:
 
 def format_result(result: dict) -> str:
     lines = [
-        f"docs for {result['project']}: {result['docs']} docs, {result['sections']} sections; "
+        f"docs for {result['project']}: {result['docs']} docs, {result['sections']} sections, "
+        f"{result.get('code_files', 0)} code maps; "
         f"{len(result['new'])} new, {len(result['updated'])} updated, "
         f"{len(result['retired'])} retired, {result['unchanged']} unchanged"
     ]

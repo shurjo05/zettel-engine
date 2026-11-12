@@ -210,7 +210,14 @@ def brief(
             f"It also holds {sections} sections of {len(docs)} project docs (type reference), "
             "each a doc's own text, so a search returns the part of a doc that answers."
         )
-    if docs and cwd:
+    code_maps = dict(
+        conn.execute(
+            "SELECT json_extract(frontmatter, '$.project'), "
+            "count(DISTINCT json_extract(frontmatter, '$.doc')) FROM notes "
+            "WHERE type = 'reference' AND json_extract(frontmatter, '$.code') GROUP BY 1"
+        ).fetchall()
+    )
+    if (docs or code_maps) and cwd:
         from zk import docs as project_docs
 
         imported_as = project_docs.project_in(cwd)  # `zk docs --project` may name it otherwise
@@ -237,6 +244,20 @@ def brief(
             )
         if len(current_docs) > MAX_PROJECT_DOCS:
             lines.append(f"(and {len(current_docs) - MAX_PROJECT_DOCS} more docs)")
+    mapped = next(
+        (
+            (p, n)
+            for p, n in code_maps.items()
+            if p == imported_as or (current and same_project(current, str(p)))
+        ),
+        None,
+    )
+    if mapped:
+        lines.append(
+            f"The vault has code maps of {mapped[1]} of this project's source files (classes, "
+            f'signatures, comments, requirement ids): search_notes("<what you need>", '
+            f'project="{mapped[0]}") finds the file that declares it, so you read only that file.'
+        )
     if here:
         name, project, body = here
         entries = _notes_section(body)
