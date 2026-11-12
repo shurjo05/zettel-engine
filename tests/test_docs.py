@@ -84,6 +84,20 @@ def test_a_long_code_block_is_closed_and_reopened_across_parts():
     assert "password: string" in docs.capture.redact(sections[0].text)  # a type, not a secret
 
 
+def test_pdf_running_footers_are_dropped_and_titles_read_like_headings():
+    footer = "CIS 501 - Team 02B - Requirements"
+    pages = [f"R-0{i} - Employee does thing {i}\n{para(20, i)}\n{footer}" for i in range(1, 5)]
+    pages[2] = f"continues mid sentence here\nR-03 - Employee does thing 3\n{footer}"
+    sections = docs.split_pdf_text("\f".join(pages), "D2")
+    assert not any(footer in s.text for s in sections)
+    assert [s.path[1] for s in sections][2] == "page 3: R-03 - Employee does thing 3"
+
+
+def test_a_heading_with_nothing_under_it_joins_the_next_section():
+    sections = docs.split_markdown("## Retained flows\n\n## R-01 Create\n\nText.", "d")
+    assert len(sections) == 1 and sections[0].text.startswith("## Retained flows")
+
+
 def test_pdf_text_is_cut_by_page():
     sections = docs.split_pdf_text(f"{para(20, 1)}\f\f{para(20, 2)}", "Spec")
     labels = [s.path[1] for s in sections]  # titled by page and the page's first line

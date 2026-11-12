@@ -46,6 +46,9 @@ def test_secrets_are_redacted():
     # Code that only mentions such names is left alone.
     assert redact("def login(password: str) -> bool:") == "def login(password: str) -> bool:"
     assert redact("max_tokens: 1000") == "max_tokens: 1000"
+    assert redact("Login(username: string, password: string)").endswith("password: string)")
+    assert redact("INVALID_PASSWORD: Wrong password") == "INVALID_PASSWORD: Wrong password"
+    assert redact("SECRET_KEY=abcdef12 # dev only") == "SECRET_KEY=[REDACTED] # dev only"
     assert redact("token AKIAABCDEFGHIJKLMNOP end") == "token [REDACTED] end"
     pem = "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----"
     assert redact(f"x {pem} y") == "x [REDACTED] y"

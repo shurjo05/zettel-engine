@@ -228,6 +228,7 @@ def brief(
             f'This project\'s docs are in the vault: search_notes(query, project="{project}") '
             "returns the matching section; get_note on a contents note lists a doc's sections."
         )
+        current_docs.sort(key=lambda d: -int(d.get("doc_tokens") or 0))  # biggest first
         for d in current_docs[:MAX_PROJECT_DOCS]:
             stem = str(d.get("id", "")).removeprefix(f"ref-{project}-")
             lines.append(

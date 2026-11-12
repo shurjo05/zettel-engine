@@ -205,20 +205,47 @@ def split_markdown(text: str, title: str, limit: int = MAX_CHARS) -> list[Sectio
             walk(child, here)
 
     walk(root, [title])
-    return out
+    # A section that is only a heading (its children were cut as siblings) joins the next.
+    merged: list[Section] = []
+    for sec in out:
+        if merged and all(
+            ln.lstrip().startswith("#") for ln in merged[-1].text.split("\n") if ln.strip()
+        ):
+            merged[-1] = Section(sec.path, f"{merged[-1].text}\n\n{sec.text}")
+        else:
+            merged.append(sec)
+    return merged
+
+
+def _pdf_label(part: str) -> str:
+    """A part's title: its first line that reads like a heading (capital or number first),
+    else its first line, cut to about 60 characters."""
+    lines = [ln.strip() for ln in part.split("\n") if ln.strip()]
+    first = next(
+        (ln for ln in lines if ln[0].isupper() or ln[0].isdigit()), lines[0] if lines else ""
+    )
+    return first if len(first) <= 60 else first[:60].rsplit(" ", 1)[0] + "..."
 
 
 def split_pdf_text(text: str, title: str, limit: int = MAX_CHARS) -> list[Section]:
-    """A PDF's text (pages split by form feeds) as sections of whole paragraphs, by page."""
+    """A PDF's text (pages split by form feeds) as sections of whole paragraphs, by page.
+
+    A line on three or more pages (a running header or footer) is dropped.
+    """
+    pages = [re.sub(r"[ \t]+\n", "\n", page).strip() for page in text.split("\f")]
+    seen: dict[str, int] = {}
+    for page in pages:
+        for line in {ln.strip() for ln in page.split("\n") if ln.strip()}:
+            seen[line] = seen.get(line, 0) + 1
+    running = {line for line, n in seen.items() if n >= 3}
     out: list[Section] = []
-    for page_no, page in enumerate(text.split("\f"), 1):
-        page = re.sub(r"[ \t]+\n", "\n", page).strip()
+    for page_no, page in enumerate(pages, 1):
+        if running:
+            page = "\n".join(ln for ln in page.split("\n") if ln.strip() not in running).strip()
         if not page:
             continue
         for i, part in enumerate(_pack(page, limit), 1):
-            first = next((ln.strip() for ln in part.split("\n") if ln.strip()), "")
-            if len(first) > 60:
-                first = first[:60].rsplit(" ", 1)[0] + "..."
+            first = _pdf_label(part)
             label = f"page {page_no}" + (f" part {i}" if i > 1 else "") + f": {first}"
             out.append(Section([title, label], part))
     return out
