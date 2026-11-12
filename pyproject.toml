@@ -1,6 +1,6 @@
 [project]
 name = "zettel-engine"
-version = "0.1.0"
+version = "0.13.0"
 description = "Index, search and maintain an Obsidian Zettelkasten for AI tools"
 readme = "README.md"
 license = "MIT"

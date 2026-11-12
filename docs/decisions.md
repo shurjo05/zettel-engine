@@ -565,3 +565,30 @@ although the saved capture was redacted. A preview should show exactly what woul
 dry run is now redacted too. In the same run, a background `zk process` that started before
 `git pull` finished on the old code and re-created the `repos` map; that was a one-off of updating
 mid-run, so nothing was changed for it.
+
+## 28. A public API for programs built on zk (2026-11-12)
+
+tokenmaxxing, Shurjo's separate tool that has Claude hand implementation work to Codex, owns zk
+rather than living inside it. It mounts zk's search tools in its own MCP server and passes a coding
+agent's note suggestions to zk's inbox. For that it needs a few zk names it can rely on.
+
+- **One module, `zk.api`, is the contract.** Everything else stays internal. `docs/api.md` lists
+  the names, and `tests/test_api.py` pins them, so a refactor inside zk can't silently break a
+  caller. Callers track zk's main branch and lock the exact commit rather than a version tag
+  (Shurjo, 2026-11-12): zk keeps changing, and the pinned tests are what keep the contract.
+- **Mount, don't proxy.** `add_knowledge_tools` registers the same tool functions on another
+  `MCPServer`, in the same process. Proxying `zk serve` would mean a second process, double
+  serialization and an MCP client to maintain. Re-implementing the tools would let them drift. A
+  test checks that the mounted tools answer exactly as `zk serve` does. The function has no
+  `allow_writes` parameter, so no write tool can be mounted this way.
+- **The caller's only vault write is a capture.** `save_text` is `zk capture --text` as a
+  function, keeping `:` in the source so ingest can tell a coding agent's suggestions
+  (`codex:...`) apart. Notes are still written only by zk's ingest, through the duplicate check and
+  hold. The ingest instructions gain one paragraph on `codex:` captures: they are suggestions,
+  kept only if they pass the one-month test and no note already covers them, and split when one
+  holds two ideas.
+- **`find_duplicates` refreshes vectors first.** `check_duplicates` assumes the caller has run
+  `update_embeddings`; a caller that forgot would miss notes written since. The API does both, so
+  a suggestion is compared with the vault as it is now.
+- **`server_ready` takes the server's name.** `zk hooks status --server NAME` checks a server
+  other than `zk`, for when Claude Code uses a program that mounts zk's tools instead.
