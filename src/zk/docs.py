@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from zk import capture, vault
+from zk import capture, crossref, outline, vault
 from zk.index import data_dir
 from zk.learn import SECRET_FILES, SKIP_DIRS, _key
 from zk.search import project_slug
@@ -51,6 +51,9 @@ AGENT_FILES = ("CLAUDE.md", "AGENTS.md", "CLAUDE.local.md")
 MAX_CHARS = 1600  # a section: about 400 tokens, inside the embedder's 512
 MIN_CHARS = 200  # an intro shorter than this joins the first subsection
 MAX_DOC_BYTES = 2_000_000
+CODE_INCLUDE = tuple(f"*{suffix}" for suffix in outline.LANGS)
+MAX_CODE_FILES = 3000
+MAX_CODE_BYTES = 500_000  # bigger source files are generated or data
 CHARS_PER_TOKEN = 4
 
 _FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
@@ -344,8 +347,12 @@ def plan_doc(
     created: str,
     is_pdf: bool = False,
     doc_slug: str | None = None,
+    facts: crossref.CodeFacts | None = None,
 ) -> list[Planned]:
-    """The vault notes for one doc: its sections and its contents note."""
+    """The vault notes for one doc: its sections and its contents note.
+
+    With the project's CodeFacts, each section also records what it refers to (`refs`:
+    ids and class names) and why it may no longer match the code (`stale`)."""
     title = Path(doc_rel).stem
     sections = split_pdf_text(text, title) if is_pdf else split_markdown(text, title)
     if not sections:
@@ -375,6 +382,7 @@ def plan_doc(
             "title": note_title,
             **base,
             "section": label,
+            **_cross(sec.text, facts),
             "sources": [f"project:{project}", f"doc:{project}/{doc_rel}"],
             "tags": [],
             "created": created,
@@ -409,6 +417,83 @@ def plan_doc(
         0, Planned(f"{REFS_DIR}/{project}/{contents_stem}.md", f"---\n{_front(front)}\n---\n{body}")
     )
     return planned
+
+
+def _cross(text: str, facts: crossref.CodeFacts | None) -> dict:
+    """A section's `refs` and `stale` fields, each only when it has some."""
+    out: dict = {}
+    if refs := crossref.mentions(text, facts):
+        out["refs"] = refs
+    if stale := crossref.stale_reasons(text, facts):
+        out["stale"] = stale
+    return out
+
+
+def find_code(root: Path, exclude=()) -> list[str]:
+    """A project's source files (relative paths), generated ones included."""
+    return find_docs(root, CODE_INCLUDE, exclude)[:MAX_CODE_FILES]
+
+
+def scan_code(
+    root: Path, exclude=(), stamps: dict[str, list[float]] | None = None
+) -> crossref.CodeFacts:
+    """What the project's code declares, by name, read from its source files' outlines.
+    Generated files (designer files, migrations) count as present but aren't read."""
+    found = find_code(root, exclude)
+    outlines = {}
+    for rel in found:
+        path = root / rel
+        if stamps is not None:
+            stamps[rel] = _stamp(path)
+        if _matches(rel, outline.GENERATED):
+            continue
+        try:
+            if path.stat().st_size > MAX_CODE_BYTES:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if found_outline := outline.outline(rel, text):
+            outlines[rel] = found_outline
+    return crossref.facts_from(outlines, found)
+
+
+CODE_IDS = "code--ids"  # stem of a project's note of where its code tags each id
+
+
+def plan_code_ids(project: str, facts: crossref.CodeFacts, created: str) -> Planned | None:
+    """One note listing where the code tags each id (`[Requirement("R-06")]`), so get_refs
+    can point at the code as well as the docs. None when the code tags none."""
+    if not facts.ids:
+        return None
+
+    def key(ref: str) -> tuple:
+        prefix, _, number = ref.partition("-")
+        digits = re.match(r"\d+", number)
+        return prefix, int(digits[0]) if digits else 0, ref
+
+    lines = [f"- {ref}: " + "; ".join(facts.ids[ref]) for ref in sorted(facts.ids, key=key)]
+    title = f"{project}: ids in the code"
+    body = (
+        f"# {title}\n\nWhere {project}'s code tags each id, by file and declaration. "
+        "get_refs(id) lists these with the doc sections that name the id.\n\n"
+        + capture.redact("\n".join(lines))
+        + "\n"
+    )
+    front = {
+        "id": f"ref-{project}-{CODE_IDS}",
+        "title": title,
+        "type": "reference",
+        "project": project,
+        "code_ids": {ref: facts.ids[ref] for ref in sorted(facts.ids, key=key)},
+        "refs": sorted(facts.ids, key=key),
+        "sources": [f"project:{project}"],
+        "tags": [],
+        "created": created,
+        "generated": "zk",
+        "body_hash": _hash(body),
+    }
+    return Planned(f"{REFS_DIR}/{project}/{CODE_IDS}.md", f"---\n{_front(front)}\n---\n{body}")
 
 
 def _split_front(text: str) -> tuple[dict, str]:
@@ -516,6 +601,7 @@ def import_docs(
     project: str | None = None,
     now: datetime | None = None,
     dry_run: bool = False,
+    code: bool | None = None,
 ) -> dict:
     """Bring refs/<project>/ in line with the project's docs. Returns what changed.
 
@@ -535,16 +621,20 @@ def import_docs(
     exclude = exclude if exclude is not None else last.get("exclude", [])
     project = project_slug(project or last.get("project") or root.name)
     pdftotext = pdftotext_path(pdftotext or last.get("pdftotext"))
+    code = code if code is not None else last.get("code", True)
     created = now.date().isoformat()
 
     result: dict = {
-        "project": project, "docs": 0, "sections": 0, "new": [], "updated": [],
-        "retired": [], "edited": [], "unchanged": 0, "skipped": [], "duplicates": [],
+        "project": project, "docs": 0, "sections": 0, "code_files": 0, "stale": [], "new": [],
+        "updated": [], "retired": [], "edited": [], "unchanged": 0, "skipped": [], "duplicates": [],
     }  # fmt: skip
     planned: list[Planned] = []
     seen_text: dict[str, str] = {}
     files: dict[str, list[float]] = {}
     folders: dict[str, list[float]] = {".": _stamp(root)}
+    code_stamps: dict[str, list[float]] = {}
+    facts = scan_code(root, exclude, code_stamps) if code else None
+    result["code_files"] = len(code_stamps)
     found = find_docs(root, include, exclude)
     stems: dict[str, int] = {}
     for rel in found:
@@ -567,11 +657,19 @@ def import_docs(
         slug = _slug(Path(rel).stem, 50)
         if stems[slug] > 1:  # two docs share a name (docs/ai/README.md, README.md)
             slug = _slug(Path(rel).with_suffix("").as_posix(), 70)
-        notes = plan_doc(project, rel, text, created, is_pdf, slug)
+        notes = plan_doc(project, rel, text, created, is_pdf, slug, facts)
         if notes:
             result["docs"] += 1
             result["sections"] += len(notes) - 1
             planned += notes
+            result["stale"] += [
+                p.rel for p in notes if "\nstale: " in p.text.split("\n---\n", 1)[0]
+            ]
+    if facts and (ids_note := plan_code_ids(project, facts, created)):
+        planned.append(ids_note)
+    for rel, stamp in code_stamps.items():  # a code change can make a section stale
+        files.setdefault(rel, stamp)
+        folders.setdefault(Path(rel).parent.as_posix(), _stamp(root / Path(rel).parent))
 
     touched: list[str] = []
     wanted = {p.rel for p in planned}
@@ -634,6 +732,7 @@ def import_docs(
         "include": list(include),
         "exclude": list(exclude),
         "pdftotext": pdftotext,
+        "code": code,
         "files": files,
         "folders": folders,
         "docs": _doc_index(planned),
@@ -672,6 +771,12 @@ def format_result(result: dict) -> str:
         f"{len(result['new'])} new, {len(result['updated'])} updated, "
         f"{len(result['retired'])} retired, {result['unchanged']} unchanged"
     ]
+    if result.get("stale"):
+        lines.append(
+            f"may be stale ({len(result['stale'])}, they name code that has moved): "
+            + ", ".join(result["stale"][:5])
+            + (", ..." if len(result["stale"]) > 5 else "")
+        )
     if result["edited"]:
         lines.append(f"left alone (edited by hand): {', '.join(result['edited'])}")
     if result["skipped"]:

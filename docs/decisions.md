@@ -672,3 +672,38 @@ agent's note suggestions to zk's inbox. For that it needs a few zk names it can 
   a suggestion is compared with the vault as it is now.
 - **`server_ready` takes the server's name.** `zk hooks status --server NAME` checks a server
   other than `zk`, for when Claude Code uses a program that mounts zk's tools instead.
+
+## 29. Doc sections linked by the ids they share, and flagged when the code has moved (2026-11-18)
+
+Shurjo asked whether graphify, a tool that builds a knowledge graph of a project, could improve
+zk, either by borrowing its ideas or by integrating it. A 30-run test on chat501 and
+FinancialAIAssistant (write-up in the project files, `graphify-review.md`) found that integrating it
+cost 34 to 44% more with the same accuracy: Claude queried the graph and then read the files
+anyway, because the graph holds names and links, not what the code does. Loading its report at
+the start was a tie. Shurjo chose to build the ideas that target docs into zk.
+
+- **Links through shared ids, found in the text, no model.** Each doc section's front matter lists
+  the ids it names (`R-06`, `UC-3`, `FIX-44`, `T-54`) and the code's own class names it uses
+  (`refs`). `get_related` puts sections that share an id first, rarest id first ("shares R-06"), so
+  one call follows a requirement to its realization, its test rows and its fixes. That trail is
+  what the chat501 Logout question walked file by file. An id named in more than a quarter of a
+  project's sections (and at least 8) links nothing, since it says nothing about any one of them.
+- **`get_refs(ref)`, one call for one id.** It lists every section naming the id, by doc, and
+  where the code tags it (`[Requirement("R-06")]` on a method, an id in a doc comment), from a
+  per-project `code--ids` note. No index table changes: the lookups read the front matter with
+  SQLite's `json_each`.
+- **A "may be stale" flag.** A section that puts a member in a class or file that doesn't declare
+  it, while another does ("ValidateRegistration in ClientController"), or names a source path that
+  is gone, gets `stale` with the reason. Search hits and `get_refs` carry it, so Claude checks the
+  code before trusting that sentence. Two of the test's partial answers came from exactly such
+  sections. Only names are compared: a section describing behaviour that has changed is not
+  caught, and inherited members are not flagged.
+- **Code changes re-sync the docs.** The source files' stamps join the docs' in `docs.json`, so
+  the flags follow the code at the next session start. The code is read with the outline scanner
+  kept from M14's tests (`outline.py`, regular expressions per language, no tree-sitter);
+  generated files count as present but aren't read. `--no-code` turns all of this off.
+- **A tiny map, not a report.** The session brief adds the project's five most-named ids, about
+  30 tokens, with a pointer to `get_refs`. A longer map is paid on every turn, which is why
+  graphify's report tied.
+- **Not done:** a call graph (graphify's flow tools cost turns without removing file reads) and
+  clusters (M14 measured them as saving nothing).
