@@ -31,7 +31,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from zk import capture, vault
+from zk import capture, proc, vault
 from zk.index import data_dir
 from zk.search import project_slug
 
@@ -222,7 +222,7 @@ def _tree(root: Path, files: list[Path], depth: int = 2, data: dict[str, int] | 
 
 def _commits(root: Path) -> list[str]:
     try:
-        done = subprocess.run(
+        done = proc.run(
             ["git", "-C", str(root), "log", f"-n{COMMITS}", "--format=%s"],
             capture_output=True,
             text=True,
@@ -327,21 +327,11 @@ def start(vault_dir: Path, root: Path) -> None:
     """Run `zk learn` detached, so the session that is starting doesn't wait for it."""
     from zk.sessions import INGESTING
 
-    flags = (
-        {
-            "creationflags": subprocess.DETACHED_PROCESS
-            | subprocess.CREATE_NEW_PROCESS_GROUP
-            | subprocess.CREATE_NO_WINDOW
-        }
-        if os.name == "nt"
-        else {"start_new_session": True}
-    )
-    subprocess.Popen(
+    proc.start(
         [sys.executable, "-m", "zk", "learn", str(vault_dir), str(root)],
         cwd=vault_dir,
         env={**os.environ, INGESTING: "1"},
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        **flags,
     )

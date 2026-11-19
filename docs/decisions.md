@@ -673,6 +673,23 @@ agent's note suggestions to zk's inbox. For that it needs a few zk names it can 
 - **`server_ready` takes the server's name.** `zk hooks status --server NAME` checks a server
   other than `zk`, for when Claude Code uses a program that mounts zk's tools instead.
 
+## 29. zk never opens a window on Windows (2026-11-19)
+
+Shurjo kept seeing command prompt windows pop up and asked that everything zk runs in the
+background always run hidden. The cause was the flags of the detached runs started at session
+end and session start (`zk process`, `zk learn`, `zk docs`, the hook's ingest command):
+`DETACHED_PROCESS` leaves a process without a console, and Windows ignores `CREATE_NO_WINDOW`
+when both are given. Every console program such a process then starts (git for each commit, claude,
+pdftotext, schtasks) opens a new visible window. Hooks and the scheduled task run through
+`pythonw.exe`, which has no console either, so their children did the same.
+
+- **One module starts every child process, `zk.proc`.** `proc.run` is `subprocess.run` with
+  `CREATE_NO_WINDOW` on Windows. `proc.start` starts a background run in its own process group with
+  `CREATE_NO_WINDOW` and never `DETACHED_PROCESS`, so it gets a hidden console that its own children
+  share. It can also break away from the app's job object. Nothing changes on other systems.
+- **A test pins it.** `tests/test_proc.py` fails if any module other than `proc.py` calls
+  `subprocess.run`, `Popen` or `os.system`, or uses `DETACHED_PROCESS`.
+
 ## 30. Doc sections linked by the ids they share, and flagged when the code has moved (2026-11-18)
 
 Shurjo asked whether graphify, a tool that builds a knowledge graph of a project, could improve

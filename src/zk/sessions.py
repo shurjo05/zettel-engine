@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from zk import capture, vault
+from zk import capture, proc, vault
 from zk.index import data_dir
 from zk.search import is_container, project_slug
 
@@ -207,21 +207,8 @@ def start_process(vault_dir: Path) -> None:
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
     }
-    if os.name != "nt":
-        subprocess.Popen(command, start_new_session=True, **common)
-        return
-    detached = (
-        subprocess.DETACHED_PROCESS
-        | subprocess.CREATE_NEW_PROCESS_GROUP
-        | subprocess.CREATE_NO_WINDOW
-    )
-    try:
-        # Out of the app's job object too, so closing the session doesn't end the run.
-        subprocess.Popen(
-            command, creationflags=detached | subprocess.CREATE_BREAKAWAY_FROM_JOB, **common
-        )
-    except OSError:  # the job doesn't allow breaking away: detached is the best we can do
-        subprocess.Popen(command, creationflags=detached, **common)
+    # Out of the app's job object too, so closing the session doesn't end the run.
+    proc.start(command, breakaway=True, **common)
 
 
 def from_hook(vault_dir: Path, event: dict, now: datetime | None = None) -> tuple[str | None, str]:

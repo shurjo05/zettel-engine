@@ -30,7 +30,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from zk import sessions
+from zk import proc, sessions
 from zk.capture import ZK_MARKER
 from zk.index import data_dir
 from zk.ingest import list_held, list_inbox
@@ -196,9 +196,8 @@ def refresh_maps(vault_dir: Path, log) -> None:
 def _run(command: list[str] | str, vault_dir: Path, log) -> int:
     log.write(f"$ {command if isinstance(command, str) else subprocess.list2cmdline(command)}\n")
     log.flush()
-    flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
     try:
-        done = subprocess.run(
+        done = proc.run(
             command,
             shell=isinstance(command, str),
             cwd=vault_dir,
@@ -207,7 +206,6 @@ def _run(command: list[str] | str, vault_dir: Path, log) -> int:
             stdout=log,
             stderr=subprocess.STDOUT,
             timeout=AGENT_TIMEOUT,
-            **flags,
         )
     except subprocess.TimeoutExpired:
         log.write(f"timed out after {AGENT_TIMEOUT // 60} minutes\n")

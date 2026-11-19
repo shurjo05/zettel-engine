@@ -25,6 +25,7 @@ from zk import (
     lookup,
     maintain,
     migrate,
+    proc,
     process,
     sessions,
     vault,
@@ -286,13 +287,8 @@ def _start_ingest(command: str, vault_dir: Path, now: datetime) -> Path:
     logs = data_dir() / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     log = logs / f"ingest-{now:%Y-%m-%d-%H%M%S}.log"
-    detach = (
-        {"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
-        if os.name == "nt"
-        else {"start_new_session": True}
-    )
     with log.open("ab") as out:
-        subprocess.Popen(  # the hook's own command line, from the user's settings
+        proc.start(  # the hook's own command line, from the user's settings
             command,
             shell=True,
             cwd=vault_dir,
@@ -300,7 +296,6 @@ def _start_ingest(command: str, vault_dir: Path, now: datetime) -> Path:
             stdin=subprocess.DEVNULL,
             stdout=out,
             stderr=subprocess.STDOUT,
-            **detach,
         )
     return log
 

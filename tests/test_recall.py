@@ -477,23 +477,21 @@ def test_a_run_is_recorded_as_unfinished_until_it_ends(vault, tmp_path):
 
 
 def test_the_background_run_breaks_away_from_the_apps_job_on_windows(vault, monkeypatch):
-    from zk import sessions
+    from zk import proc, sessions
 
     calls = []
 
     def popen(command, creationflags=0, **kwargs):
         calls.append(creationflags)
-        if creationflags & 0x01000000:
+        if creationflags & proc.CREATE_BREAKAWAY_FROM_JOB:
             raise PermissionError("the job forbids breaking away")
 
-    for name, value in (("DETACHED_PROCESS", 0x8), ("CREATE_NEW_PROCESS_GROUP", 0x200),
-                        ("CREATE_NO_WINDOW", 0x08000000),
-                        ("CREATE_BREAKAWAY_FROM_JOB", 0x01000000)):  # fmt: skip
-        monkeypatch.setattr(sessions.subprocess, name, value, raising=False)
-    monkeypatch.setattr(sessions.subprocess, "Popen", popen)
-    monkeypatch.setattr(sessions.os, "name", "nt")
+    monkeypatch.setattr(proc.subprocess, "Popen", popen)
+    monkeypatch.setattr(proc.os, "name", "nt")
     sessions.start_process(vault)
-    assert calls[0] & 0x01000000 and not calls[1] & 0x01000000 and calls[1] & 0x8
+    assert calls[0] & proc.CREATE_BREAKAWAY_FROM_JOB
+    assert not calls[1] & proc.CREATE_BREAKAWAY_FROM_JOB
+    assert all(c & proc.CREATE_NO_WINDOW and not c & 0x8 for c in calls)  # hidden, never detached
 
 
 def test_learn_skips_datasets_and_media(vault, repo):

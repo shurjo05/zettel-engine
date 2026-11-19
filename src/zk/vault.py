@@ -16,6 +16,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from zk import proc
+
 
 class VaultWriteError(Exception):
     pass
@@ -122,7 +124,7 @@ def git_commit(vault: Path, paths: list[str], message: str) -> str | None:
         # Paths go on stdin, not the command line: a run can touch hundreds of files,
         # more than Windows allows in one command line (32,767 characters).
         extra = ["--pathspec-from-file=-", "--pathspec-file-nul"] if paths is not None else []
-        return subprocess.run(
+        return proc.run(
             ["git", "-C", str(vault), *args, *extra],
             input="\0".join(paths) if paths is not None else None,
             capture_output=True,

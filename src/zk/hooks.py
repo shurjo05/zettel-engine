@@ -28,6 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+from zk import proc
 from zk.sessions import claude_home
 
 TASK_NAME = "zk catch-up"
@@ -100,9 +101,7 @@ def server_ready(name: str = "zk") -> tuple[bool | None, str]:
     if not claude:
         return None, "claude is not on PATH, so it couldn't be checked"
     try:
-        done = subprocess.run(
-            [claude, "mcp", "get", name], capture_output=True, text=True, timeout=30
-        )
+        done = proc.run([claude, "mcp", "get", name], capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return None, f"couldn't ask claude ({exc})"
     if done.returncode != 0:
@@ -320,7 +319,7 @@ def task_xml(
 
 
 def _schtasks(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["schtasks", *args], capture_output=True, text=True)
+    return proc.run(["schtasks", *args], capture_output=True, text=True)
 
 
 def install_schedule(
