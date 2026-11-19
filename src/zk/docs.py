@@ -531,6 +531,13 @@ def edited_by_hand(text: str) -> bool:
     return front.get("body_hash") != _hash(body)
 
 
+def _same_body(old: str, new: str) -> bool:
+    """A note whose text is what zk would write now holds no one's edits, whatever its
+    hash says: sections written from pdftotext's \r\n text were hashed with those line
+    ends, and git checks them out with \n, so their hashes never match again."""
+    return _split_front(old)[1].replace("\r\n", "\n") == _split_front(new)[1]
+
+
 def _same_but_created(old: str, new: str) -> bool:
     strip = re.compile(r'^created: ".*"$', re.M)
     return strip.sub("", old) == strip.sub("", new)
@@ -699,7 +706,7 @@ def import_docs(
         if _same_but_created(old, p.text):
             result["unchanged"] += 1
             continue
-        if edited_by_hand(old):
+        if edited_by_hand(old) and not _same_body(old, p.text):
             result["edited"].append(p.rel)
             continue
         old_created = _split_front(old)[0].get("created") or created

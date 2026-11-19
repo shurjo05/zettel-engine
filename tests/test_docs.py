@@ -374,7 +374,13 @@ def test_pdf_sections_written_with_windows_line_ends_still_update(git_vault, tmp
     assert b"\r\n" in note.read_bytes()  # what the old import wrote
     monkeypatch.undo()
     monkeypatch.setattr(docs, "_read_doc", lambda path, pdftotext: text["now"])
+    rel = note.relative_to(git_vault).as_posix()
+    # git checks the note out with \n, so its stored hash (of the \r\n body) never matches
+    note.write_bytes(note.read_bytes().replace(b"\r\n", b"\n"))
+    unchanged = docs.import_docs(git_vault, root, pdftotext="pdftotext")
+    assert unchanged["edited"] == [] and unchanged["updated"] == [rel]  # rewritten, rehashed
+    assert docs.edited_by_hand(note.read_text(encoding="utf-8")) is False
     text["now"] = text["now"].replace("More.", "Changed.")
     again = docs.import_docs(git_vault, root, pdftotext="pdftotext")
-    assert again["edited"] == [] and again["updated"] == [note.relative_to(git_vault).as_posix()]
-    assert b"\r\n" not in note.read_bytes() and "Changed." in note.read_text(encoding="utf-8")
+    assert again["edited"] == [] and again["updated"] == [rel]
+    assert "Changed." in note.read_text(encoding="utf-8")

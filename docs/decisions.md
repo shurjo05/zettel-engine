@@ -715,6 +715,22 @@ the start was a tie. Shurjo chose to build the ideas that target docs into zk.
 - **A fix to M14 found on the way.** pdftotext writes `\r\n` on Windows. A section was hashed
   with them, but read back with `\n`, so every PDF section looked edited by hand and was never
   updated (27 in chat501). Doc text is now read with `\n` line ends, and notes are compared as
-  written, so the sections stuck this way update on the next sync.
+  written. Sections already stuck (git checks them out with `\n`, so their stored hash can't
+  match again) are rewritten when their text is what zk would write now.
+- **Measured on the PC (20 headless Sonnet runs, 5 questions per project, one run each).**
+
+  | | files only | zk with M15 | right of 5 (files, zk) |
+  |---|---|---|---|
+  | chat501 | $0.79 | $0.89 (+13%) | 4, 4 |
+  | FinancialAIAssistant | $0.75 | $0.71 (-8%) | 4, 5 |
+  | total | $1.54 | $1.60 (+4%) | |
+
+  With one run per question, both differences are within noise: M15 is not a token win. It is
+  a correctness one. "Which tests and fixes cover R-06?" was answered from the vault with no
+  file read (at about the cost of grepping), and the stale flags point at the 8 chat501
+  sections that really describe moved code. FinancialAIAssistant has no requirement ids, so
+  only class names link there. `zk eval` MRR 0.81 before, 0.80 after on the same content. After
+  the fixes: 8 stale flags (all real, down from 18), the ids note 62 KB (from 120 KB),
+  `get_refs("R-06")` about 900 tokens (from 2,400).
 - **Not done:** a call graph (graphify's flow tools cost turns without removing file reads) and
   clusters (M14 measured them as saving nothing).
