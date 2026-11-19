@@ -11,7 +11,7 @@ a change that would break them must change `tests/test_api.py` too, which makes 
 
 | Name | What it does |
 | --- | --- |
-| `add_knowledge_tools(server, vault, db, excludes, embedder=None)` | Adds zk's read-only tools (`search_notes`, `get_note`, `get_related`, and `suggest_links` when an embedder is given) to another `MCPServer`. They are the same code as `zk serve` and give the same answers. No write tool can be added this way. |
+| `add_knowledge_tools(server, vault, db, excludes, embedder=None)` | Adds zk's read-only tools (`search_notes`, `get_note`, `get_related`, `get_refs`, and `suggest_links` when an embedder is given) to another `MCPServer`. They are the same code as `zk serve` and give the same answers. No write tool can be added this way. |
 | `INSTRUCTIONS` | The read-only tools' instructions, to include in the host server's own. |
 | `run_stdio(server)` | Serves an `MCPServer` over stdio the way `zk serve` does, including the fix for Claude Code versions that open with a newer protocol request. |
 | `load_embedder(model=DEFAULT_MODEL)` | The local embedding model zk uses. |

@@ -143,7 +143,7 @@ def add_knowledge_tools(
     """Add zk's read-only tools to another program's MCP server (zk.api, docs/api.md).
 
     The tools are the same code `zk serve` runs: search_notes, get_note, get_related,
-    and suggest_links when an embedder is given. No write tool can be added this way.
+    get_refs, and suggest_links when an embedder is given. No write tool can be added this way.
     """
     vault = vault.resolve()
     excludes = tuple(excludes)
@@ -217,6 +217,17 @@ def _add_read_tools(server: MCPServer, run: Runner, embedder: Embedder | None) -
         """
         k = max(1, min(k, 50))
         return run(lambda c: lookup.related(c, note, k=k))
+
+    @server.tool(annotations=READ_ONLY, structured_output=False)
+    def get_refs(ref: str, project: str | None = None, k: int = 30) -> str:
+        """Every project doc section that names `ref`, an id such as R-06, FIX-44 or T-54 or
+        a class name, grouped by doc, plus where the code tags that id (file: declaration).
+
+        One call follows a requirement to its use case, tests, fixes and code. A section
+        with `stale` names code that has moved since it was written: check the code there.
+        """
+        k = max(1, min(k, 100))
+        return run(lambda c: lookup.refs(c, ref, project=project, k=k))
 
 
 class NoteDraft(BaseModel):

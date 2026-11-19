@@ -6,6 +6,7 @@ and for semantic search `embed.update_embeddings`.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sqlite3
@@ -55,9 +56,12 @@ class Hit:
     summary: str
     score: float  # higher is better
     snippet: str
+    stale: list[str] | None = None  # a doc section whose code names no longer match the code
 
     def to_dict(self) -> dict:
         out = asdict(self)
+        if not self.stale:
+            out.pop("stale")
         if self.type == "reference" and len(self.summary) > REFERENCE_SUMMARY:
             # A doc section's first paragraph can be a whole table or code block; the
             # title says what the section is, and get_note opens it.
@@ -171,11 +175,27 @@ def search(
         if embedder is None:
             raise ValueError(f"{mode} search needs an embedder")
         if mode == "hybrid":
-            return hybrid_search(conn, embedder, query, k=k, type=type, tag=tag, project=project)
-        return semantic_search(conn, embedder, query, k=k, type=type, tag=tag, project=project)
-    if mode != "keyword":
+            hits = hybrid_search(conn, embedder, query, k=k, type=type, tag=tag, project=project)
+        else:
+            hits = semantic_search(conn, embedder, query, k=k, type=type, tag=tag, project=project)
+    elif mode != "keyword":
         raise ValueError(f"unknown search mode {mode!r}; expected one of {', '.join(MODES)}")
-    return keyword_search(conn, query, k=k, type=type, tag=tag, project=project)
+    else:
+        hits = keyword_search(conn, query, k=k, type=type, tag=tag, project=project)
+    return mark_stale(conn, hits)
+
+
+def mark_stale(conn: sqlite3.Connection, hits: list[Hit]) -> list[Hit]:
+    """Put a doc section's "may be stale" reasons (from `zk docs`) on its hit."""
+    for hit in hits:
+        if hit.type == "reference":
+            row = conn.execute(
+                "SELECT json_extract(frontmatter, '$.stale') FROM notes WHERE path = ?",
+                (hit.path,),
+            ).fetchone()
+            if row and row[0]:
+                hit.stale = json.loads(row[0])
+    return hits
 
 
 def keyword_search(

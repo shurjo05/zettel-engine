@@ -29,7 +29,8 @@ def make(vault, tmp_path):
 
 def test_only_read_only_tools_are_offered(vault, tmp_path):
     offered = tools(make(vault, tmp_path))
-    assert sorted(t.name for t in offered) == ["get_note", "get_related", "search_notes"]
+    names = sorted(t.name for t in offered)
+    assert names == ["get_note", "get_refs", "get_related", "search_notes"]
     assert all(t.annotations.read_only_hint for t in offered)
 
 

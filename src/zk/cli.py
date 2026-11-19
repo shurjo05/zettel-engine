@@ -513,6 +513,7 @@ def cmd_docs(args: argparse.Namespace) -> int:
             pdftotext=args.pdftotext,
             project=args.project,
             dry_run=args.dry_run,
+            code=args.code,
         )
     except (FileNotFoundError, ValueError) as exc:
         print(f"zk docs: {exc}", file=sys.stderr)
@@ -975,6 +976,12 @@ def main(argv: list[str] | None = None) -> int:
     p_docs.add_argument("--pdftotext", help="path to Poppler's pdftotext, to read PDFs")
     p_docs.add_argument("--project", help="project name (default: the folder's name)")
     p_docs.add_argument("--dry-run", action="store_true", help="list the changes, write nothing")
+    p_docs.add_argument(
+        "--code",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="read the source files' names to link ids and flag stale sections (default: on)",
+    )
     p_docs.add_argument("--forget", action="store_true", help="stop syncing this project's docs")
     p_docs.add_argument("--quiet", action="store_true", help=argparse.SUPPRESS)
     p_docs.set_defaults(func=cmd_docs)
