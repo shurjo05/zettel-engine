@@ -55,6 +55,7 @@ def test_csharp_outline_keeps_declarations_comments_and_requirement_ids():
     sigs = [i.signature for i in o.items]
     assert sigs == [
         "public sealed class ContactController : ControllerBase",
+        "private readonly Dictionary<string, Contact> _contacts = new()",
         "public string Owner { get; private set; }",
         "public bool Add(string name, bool notify = true)",
         "public void Remove(string name)",
@@ -65,12 +66,12 @@ def test_csharp_outline_keeps_declarations_comments_and_requirement_ids():
         "public interface IChatConnection",
         "bool Login(string user, string hash)",
     ]  # nothing from inside a method body, the brace in a string included
-    add = o.items[2]
+    add = o.items[3]
     assert add.doc == "Adds a contact." and add.attrs == [
         '[Requirement("R-08")]',
         '[HttpPost("add")]',
     ]
-    assert o.items[4].values == ["Online", "Away", "Offline"]
+    assert o.items[5].values == ["Online", "Away", "Offline"]
     assert o.ids == ["R-08", "R-09"]
     md = outline.markdown(o)
     assert "## class ContactController.Inner" in md

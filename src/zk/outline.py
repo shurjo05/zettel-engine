@@ -148,6 +148,12 @@ _ARROW = re.compile(
 )
 _PROPERTY = re.compile(r"^\s*[\w<>\[\],.?\s]+?\s([A-Za-z_]\w*)\s*\{\s*(?:get|set|init)\b")
 _EXPR_PROPERTY = re.compile(r"^\s*[\w<>\[\],.?\s]+?\s([A-Za-z_]\w*)\s*=>")
+# A field with a modifier: `private readonly Func<int> RenderMonitoring = ...;`, `public event
+# EventHandler Changed;`. Docs name fields (a delegate, an event) like methods.
+_FIELD = re.compile(
+    r"^\s*(?:(?:public|private|protected|internal|static|readonly|const|final|volatile|"
+    r"transient|event|required|new|unsafe)\s+)+[\w<>\[\],.?\s()]*?\s([A-Za-z_]\w*)\s*(?:=|;)"
+)
 _NOT_DECL = {
     "if", "for", "foreach", "while", "switch", "catch", "using", "return", "throw", "new",
     "await", "lock", "else", "do", "try", "case", "typeof", "sizeof", "yield", "base", "this",
@@ -344,6 +350,9 @@ def _declaration(raw: str, masked: str, lang: str, scope: str) -> tuple[Item | N
             return Item("member", sig + " { " + _accessors(masked) + " }"), "body"
         if _EXPR_PROPERTY.match(masked) and "(" not in masked.split("=>", 1)[0]:
             return Item("member", sig), "body"
+    if lang in ("C#", "Java") and in_type and masked.rstrip().endswith(";"):
+        if _FIELD.match(masked):
+            return Item("member", sig), None
     paren = masked.find("(")
     before = masked[:paren].rstrip() if paren > 0 else ""
     words = before.split()

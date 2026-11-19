@@ -8,6 +8,12 @@ CLIENT = """namespace Chat.Client
         public void Logout() { }
         public void CloseClient() { }
     }
+
+    public class AdminViewCallbacks
+    {
+        public Func<string, bool> RenderMonitoring;
+        public AdminViewCallbacks() { }
+    }
 }
 """
 REGISTRATION = """namespace Chat.Client
@@ -77,3 +83,30 @@ def test_a_member_placed_in_the_wrong_class_or_file_is_stale():
     )
     assert crossref.stale_reasons(current, f) == []  # what matches the code is not flagged
     assert crossref.stale_reasons("ClientController.ValidateRegistration", None) == []
+
+
+def test_what_only_looks_like_a_misplaced_member_is_not_flagged():
+    f = facts()
+    near_misses = (
+        "The view keeps ClientController. Logout then ends the session. "  # two sentences
+        "`ClientController`. CloseClient runs next. "
+        "AdminViewCallbacks.RenderMonitoring draws it. "  # a delegate field
+        "AdminViewCallbacks from the ClientController is built first. "  # a constructor
+        "ValidateRegistration of ClientController's form is shown."  # "of" says too little
+    )
+    assert crossref.stale_reasons(near_misses, f) == []
+
+
+def test_code_spots_that_name_fewest_ids_come_first():
+    tagged = outline.outline(
+        "a.cs",
+        """public class A
+{
+    /// <summary>Covers R-01, R-02, R-03 and R-06.</summary>
+    public void Many() { }
+    [Requirement("R-06")]
+    public void One() { }
+}
+""",
+    )
+    assert crossref.facts_from({"a.cs": tagged}).ids["R-06"] == ["a.cs: A.One", "a.cs: A.Many"]

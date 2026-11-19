@@ -296,7 +296,15 @@ def pdftotext_path(configured: str | None = None) -> str | None:
 
 
 def read_doc(path: Path, pdftotext: str | None) -> str | None:
-    """A doc's text, or None if it can't be read (too big, or a PDF without pdftotext)."""
+    """A doc's text with `\n` line ends, or None if it can't be read (too big, or a PDF
+    without pdftotext)."""
+    text = _read_doc(path, pdftotext)
+    # pdftotext writes \r\n on Windows. A note written with them reads back with \n, so its
+    # hash never matched and every PDF section looked edited by hand.
+    return text.replace("\r\n", "\n").replace("\r", "\n") if text is not None else None
+
+
+def _read_doc(path: Path, pdftotext: str | None) -> str | None:
     try:
         if path.stat().st_size > MAX_DOC_BYTES:
             return None
@@ -472,21 +480,22 @@ def plan_code_ids(project: str, facts: crossref.CodeFacts, created: str) -> Plan
         digits = re.match(r"\d+", number)
         return prefix, int(digits[0]) if digits else 0, ref
 
-    lines = [f"- {ref}: " + "; ".join(facts.ids[ref]) for ref in sorted(facts.ids, key=key)]
+    ids = sorted(facts.ids, key=key)
+    named = ", ".join(ids) if len(ids) <= 5 else f"{len(ids)} ids, {ids[0]} to {ids[-1]}"
     title = f"{project}: ids in the code"
+    # The spots live in the front matter, for get_refs. The body stays short: listing them
+    # again doubled the note (120 KB for chat501) and made it match any id search.
     body = (
-        f"# {title}\n\nWhere {project}'s code tags each id, by file and declaration. "
-        "get_refs(id) lists these with the doc sections that name the id.\n\n"
-        + capture.redact("\n".join(lines))
-        + "\n"
+        f"# {title}\n\nWhere {project}'s code tags {named}, by file and declaration. "
+        "get_refs(id) lists them with the doc sections that name the id.\n"
     )
     front = {
         "id": f"ref-{project}-{CODE_IDS}",
         "title": title,
         "type": "reference",
         "project": project,
-        "code_ids": {ref: facts.ids[ref] for ref in sorted(facts.ids, key=key)},
-        "refs": sorted(facts.ids, key=key),
+        "code_ids": {ref: [capture.redact(s) for s in facts.ids[ref]] for ref in ids},
+        "refs": ids,
         "sources": [f"project:{project}"],
         "tags": [],
         "created": created,
@@ -510,6 +519,11 @@ def _split_front(text: str) -> tuple[dict, str]:
         except ValueError:
             front[key] = value
     return front, body
+
+
+def _read_exact(path: Path) -> str:
+    """A note as written, line ends included, so its hash is the one stored."""
+    return path.read_bytes().decode("utf-8")
 
 
 def edited_by_hand(text: str) -> bool:
@@ -681,7 +695,7 @@ def import_docs(
                 vault.write_new(vault_dir, p.rel, p.text)
                 touched.append(p.rel)
             continue
-        old = target.read_text(encoding="utf-8")
+        old = _read_exact(target)
         if _same_but_created(old, p.text):
             result["unchanged"] += 1
             continue
@@ -702,7 +716,7 @@ def import_docs(
         rel = path.relative_to(vault_dir).as_posix()
         if rel in wanted:
             continue
-        old = path.read_text(encoding="utf-8")
+        old = _read_exact(path)
         front, _ = _split_front(old)
         if front.get("generated") != "zk":
             continue  # someone's own note in refs/: not zk's to move

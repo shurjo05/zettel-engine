@@ -27,9 +27,10 @@ NOT_IDS = frozenset({"UTF", "SHA", "ISO", "GPT", "HTTP", "TLS", "MD", "AES", "RS
 MAX_STALE = 3  # reasons kept per section
 
 _CODE_SUFFIX = "|".join(s.lstrip(".") for s in sorted(LANGS, key=len, reverse=True))
-_DOTTED = re.compile(r"\b([A-Z][A-Za-z0-9_]*)\s*(?:\.|::|#)\s*([A-Za-z_][A-Za-z0-9_]*)\b")
+# `Class.member` with nothing between: "LoginForm. Logout" is two sentences, not a member.
+_DOTTED = re.compile(r"\b([A-Z][A-Za-z0-9_]*)(?:\.|::|#)([A-Za-z_][A-Za-z0-9_]*)\b")
 _IN_CLASS = re.compile(
-    r"\b([A-Za-z_][A-Za-z0-9_]*)(?:\(\))?\s+(?:is\s+)?(?:in|on|inside|from|of)\s+"
+    r"\b([A-Za-z_][A-Za-z0-9_]*)(?:\(\))?\s+(?:is\s+)?(?:in|on|inside)\s+"
     r"(?:the\s+)?([A-Z][A-Za-z0-9_]*)\b"
 )
 _IN_FILE = re.compile(
@@ -49,7 +50,8 @@ class CodeFacts:
     owners: dict[str, set[str]] = field(default_factory=dict)  # member -> classes with it
     homes: dict[str, set[str]] = field(default_factory=dict)  # class -> files declaring it
     file_names: dict[str, set[str]] = field(default_factory=dict)  # file name -> names in it
-    ids: dict[str, list[str]] = field(default_factory=dict)  # id -> "file: Class.member"
+    # id -> "file: Class.member", the spots that name fewest other ids first
+    ids: dict[str, list[str]] = field(default_factory=dict)
     files: set[str] = field(default_factory=set)  # every source file's name, lower case
 
     @property
@@ -88,6 +90,7 @@ def facts_from(outlines: dict[str, Outline], files: list[str] | None = None) -> 
     """CodeFacts from the outlines of a project's source files, keyed by path. `files`
     lists every source file, generated ones too, so a doc naming one isn't flagged."""
     facts = CodeFacts(files={PurePosixPath(f).name.lower() for f in [*(files or []), *outlines]})
+    named: dict[str, int] = {}  # spot -> ids it names: a comment listing ten ids says little
     for rel, o in sorted(outlines.items()):
         name = PurePosixPath(rel).name.lower()
         in_file = facts.file_names.setdefault(name, set())
@@ -116,8 +119,11 @@ def facts_from(outlines: dict[str, Outline], files: list[str] | None = None) -> 
             for ref in item.ids:
                 if _id_ok(ref):
                     spot = f"{rel}: {where}"
+                    named[spot] = max(named.get(spot, 0), len(item.ids))
                     if spot not in facts.ids.setdefault(ref, []):
                         facts.ids[ref].append(spot)
+    for spots in facts.ids.values():
+        spots.sort(key=lambda s: named[s])
     return facts
 
 
@@ -147,8 +153,8 @@ def stale_reasons(text: str, facts: CodeFacts | None) -> list[str]:
     out: list[str] = []
 
     def misplaced(member: str, cls: str) -> None:
-        if cls not in facts.members or member in facts.members[cls] or member == cls:
-            return
+        if cls not in facts.members or member in facts.members[cls] or member in facts.members:
+            return  # declared there, or a class itself (its constructor isn't "misplaced")
         others = sorted(facts.owners.get(member, set()) - {cls})
         if others and not _inherited(facts, cls, member):
             out.append(f"{member} is declared in {', '.join(others)}, not {cls}")

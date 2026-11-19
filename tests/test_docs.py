@@ -303,7 +303,8 @@ def test_sections_link_by_shared_ids_and_flag_code_that_moved(git_vault, tmp_pat
     assert result["stale"] == ["refs/chat/spec--intro.md"]
     refs_dir = git_vault / "refs" / "chat"
     ids_note = (refs_dir / "code--ids.md").read_text(encoding="utf-8")
-    assert "- R-06: Client/ClientController.cs: ClientController.Logout" in ids_note
+    assert "Client/ClientController.cs: ClientController.Logout" in ids_note
+    assert "code tags R-06, by file" in ids_note and ids_note.count("Logout") == 1
 
     conn = open_db(default_db_path(git_vault))
     build_index(conn, git_vault)
@@ -317,6 +318,7 @@ def test_sections_link_by_shared_ids_and_flag_code_that_moved(git_vault, tmp_pat
     assert found["code"] == [
         {"project": "chat", "at": "Client/ClientController.cs: ClientController.Logout"}
     ]
+    assert found["code_total"] == 1
     related = lookup.related(conn, "refs/chat/tests--intro.md")["related"]
     req = next(r for r in related if r["path"] == "refs/chat/requirements--intro.md")
     assert req["relations"][0] == "shares R-06"
@@ -356,3 +358,23 @@ def test_no_code_leaves_the_source_unread(git_vault, tmp_path):
     front = (git_vault / "refs" / "chat" / "spec--intro.md").read_text(encoding="utf-8")
     assert "stale:" not in front and "refs:" in front  # ids still link sections
     assert docs.import_docs(git_vault, root)["code_files"] == 0  # the choice is remembered
+
+
+def test_pdf_sections_written_with_windows_line_ends_still_update(git_vault, tmp_path, monkeypatch):
+    root = tmp_path / "Chat"
+    root.mkdir()
+    (root / "spec.pdf").write_bytes(b"%PDF")
+    text = {"now": f"Spec\r\n\r\n{para(40, 1)}\r\nMore."}
+    monkeypatch.setattr(docs, "_read_doc", lambda path, pdftotext: text["now"])
+    monkeypatch.setattr(docs, "read_doc", lambda path, pdftotext: text["now"])  # as before
+    docs.import_docs(git_vault, root, project="chat", pdftotext="pdftotext")
+    (note,) = [
+        n for n in (git_vault / "refs" / "chat").glob("spec--*.md") if b"More." in n.read_bytes()
+    ]
+    assert b"\r\n" in note.read_bytes()  # what the old import wrote
+    monkeypatch.undo()
+    monkeypatch.setattr(docs, "_read_doc", lambda path, pdftotext: text["now"])
+    text["now"] = text["now"].replace("More.", "Changed.")
+    again = docs.import_docs(git_vault, root, pdftotext="pdftotext")
+    assert again["edited"] == [] and again["updated"] == [note.relative_to(git_vault).as_posix()]
+    assert b"\r\n" not in note.read_bytes() and "Changed." in note.read_text(encoding="utf-8")

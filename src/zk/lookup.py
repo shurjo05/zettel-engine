@@ -203,7 +203,9 @@ def _sharing_refs(conn: sqlite3.Connection, path: str, front: dict) -> list[tupl
     )
 
 
-def refs(conn: sqlite3.Connection, ref: str, project: str | None = None, k: int = 30) -> dict:
+def refs(
+    conn: sqlite3.Connection, ref: str, project: str | None = None, k: int = 30, code_k: int = 10
+) -> dict:
     """Every doc section that names `ref` (an id like R-06, or a class name), grouped by
     doc, and where the code tags it. Sections whose code names may be out of date carry
     `stale`."""
@@ -227,7 +229,13 @@ def refs(conn: sqlite3.Connection, ref: str, project: str | None = None, k: int 
             entry["stale"] = front["stale"]
         sections.append(entry)
     sections.sort(key=lambda e: (str(e["doc"]), e["path"]))
-    return {"ref": ref, "sections": sections[: max(k, 0)], "total": len(sections), "code": code}
+    return {
+        "ref": ref,
+        "sections": sections[: max(k, 0)],
+        "total": len(sections),
+        "code": code[: max(code_k, 0)],  # the spots naming fewest other ids first
+        "code_total": len(code),
+    }
 
 
 def hubs(conn: sqlite3.Connection, project: str, n: int = 5) -> list[tuple[str, int]]:

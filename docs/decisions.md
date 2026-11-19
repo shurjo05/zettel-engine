@@ -673,7 +673,7 @@ agent's note suggestions to zk's inbox. For that it needs a few zk names it can 
 - **`server_ready` takes the server's name.** `zk hooks status --server NAME` checks a server
   other than `zk`, for when Claude Code uses a program that mounts zk's tools instead.
 
-## 29. Doc sections linked by the ids they share, and flagged when the code has moved (2026-11-18)
+## 30. Doc sections linked by the ids they share, and flagged when the code has moved (2026-11-18)
 
 Shurjo asked whether graphify, a tool that builds a knowledge graph of a project, could improve
 zk, either by borrowing its ideas or by integrating it. A 30-run test on chat501 and
@@ -690,7 +690,9 @@ the start was a tie. Shurjo chose to build the ideas that target docs into zk.
   project's sections (and at least 8) links nothing, since it says nothing about any one of them.
 - **`get_refs(ref)`, one call for one id.** It lists every section naming the id, by doc, and
   where the code tags it (`[Requirement("R-06")]` on a method, an id in a doc comment), from a
-  per-project `code--ids` note. No index table changes: the lookups read the front matter with
+  per-project `code--ids` note, whose spots are in its front matter only (listing them in
+  the body too made chat501's note 120 KB). Code spots that name the fewest other ids come first,
+  and at most 10 are returned: a comment listing ten ids says little about any one. No index table changes: the lookups read the front matter with
   SQLite's `json_each`.
 - **A "may be stale" flag.** A section that puts a member in a class or file that doesn't declare
   it, while another does ("ValidateRegistration in ClientController"), or names a source path that
@@ -698,6 +700,11 @@ the start was a tie. Shurjo chose to build the ideas that target docs into zk.
   code before trusting that sentence. Two of the test's partial answers came from exactly such
   sections. Only names are compared: a section describing behaviour that has changed is not
   caught, and inherited members are not flagged.
+  On chat501 the first version flagged 18 sections, of which 8 were real. The other 10 were a
+  sentence break read as `Class.member` ("LoginForm. Logout"), a delegate field, a constructor,
+  and "X of Y". So a dotted name must have nothing around its dot, fields count as
+  declarations, a class name is never a misplaced member, and only "in", "on" and "inside" place
+  a member in a class.
 - **Code changes re-sync the docs.** The source files' stamps join the docs' in `docs.json`, so
   the flags follow the code at the next session start. The code is read with the outline scanner
   kept from M14's tests (`outline.py`, regular expressions per language, no tree-sitter);
@@ -705,5 +712,9 @@ the start was a tie. Shurjo chose to build the ideas that target docs into zk.
 - **A tiny map, not a report.** The session brief adds the project's five most-named ids, about
   30 tokens, with a pointer to `get_refs`. A longer map is paid on every turn, which is why
   graphify's report tied.
+- **A fix to M14 found on the way.** pdftotext writes `\r\n` on Windows. A section was hashed
+  with them, but read back with `\n`, so every PDF section looked edited by hand and was never
+  updated (27 in chat501). Doc text is now read with `\n` line ends, and notes are compared as
+  written, so the sections stuck this way update on the next sync.
 - **Not done:** a call graph (graphify's flow tools cost turns without removing file reads) and
   clusters (M14 measured them as saving nothing).
