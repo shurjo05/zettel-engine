@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from zk import capture, vault
+from zk import capture, proc, vault
 from zk.index import data_dir
 from zk.learn import SECRET_FILES, SKIP_DIRS, _key
 from zk.search import project_slug
@@ -301,7 +301,7 @@ def read_doc(path: Path, pdftotext: str | None) -> str | None:
             return path.read_text(encoding="utf-8", errors="replace").lstrip("﻿")
         if not pdftotext:
             return None
-        done = subprocess.run(
+        done = proc.run(
             [pdftotext, "-enc", "UTF-8", str(path), "-"],
             capture_output=True,
             timeout=60,
@@ -687,21 +687,11 @@ def start(vault_dir: Path, root: Path) -> None:
     """Re-sync a project's docs detached, so the session that is starting doesn't wait."""
     from zk.sessions import INGESTING
 
-    flags = (
-        {
-            "creationflags": subprocess.DETACHED_PROCESS
-            | subprocess.CREATE_NEW_PROCESS_GROUP
-            | subprocess.CREATE_NO_WINDOW
-        }
-        if os.name == "nt"
-        else {"start_new_session": True}
-    )
-    subprocess.Popen(
+    proc.start(
         [sys.executable, "-m", "zk", "docs", str(vault_dir), str(root), "--quiet"],
         cwd=vault_dir,
         env={**os.environ, INGESTING: "1"},
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        **flags,
     )

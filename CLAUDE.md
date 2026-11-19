@@ -30,6 +30,8 @@ Read README.md first. Then:
   history file next to the index. `api.py` is the public API (docs/api.md): it may refresh the
   index like `cli.py`, and its only vault write is a new inbox capture through `vault.py`; keep
   its names stable and pinned by `tests/test_api.py`.
+- Every child process goes through `proc.py` (`proc.run`, `proc.start`), so nothing zk runs opens
+  a window on Windows; `tests/test_proc.py` pins this.
 - Retrieval changes must be judged with `zk eval`; report before and after numbers in the PR.
 - Tests must use copies of `tests/fixtures/vault` (the `vault` fixture), never a real vault.
 - Fixture notes are synthetic; never commit personal vault content.

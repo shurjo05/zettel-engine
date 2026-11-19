@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 from collections.abc import Callable
 
+from zk import proc
 from zk.capture import ZK_MARKER
 from zk.sessions import INGESTING
 
@@ -34,10 +35,9 @@ def claude(model: str | None = None) -> Ask:
         command = [exe, "-p", "--output-format", "text", "--max-turns", "1"]
         if model:
             command += ["--model", model]
-        flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
         with tempfile.TemporaryDirectory(prefix="zk-ask-") as empty:
             try:
-                done = subprocess.run(
+                done = proc.run(
                     command,
                     input=f"{ZK_MARKER} {prompt}",
                     capture_output=True,
@@ -46,7 +46,6 @@ def claude(model: str | None = None) -> Ask:
                     cwd=empty,
                     env={**os.environ, INGESTING: "1"},
                     timeout=TIMEOUT,
-                    **flags,
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
                 raise AgentError(f"claude didn't run: {exc}") from exc

@@ -29,7 +29,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from zk import vault
+from zk import proc, vault
 from zk.agent import Ask
 from zk.embed import Embedder
 from zk.maintain import LINK_AT, PARENT_AT
@@ -210,7 +210,7 @@ def thin(report: dict, min_judged: int = 5) -> list[str]:
 def drift(vault_dir: Path) -> dict:
     """Signals from the vault's git history that need no model."""
     try:
-        log = subprocess.run(
+        log = proc.run(
             ["git", "-C", str(vault_dir), "log", "--format=%s"],
             capture_output=True,
             text=True,
