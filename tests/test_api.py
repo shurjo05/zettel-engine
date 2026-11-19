@@ -37,7 +37,7 @@ def test_mounted_tools_are_zks_read_only_tools(vault, tmp_path):
 
     api.add_knowledge_tools(host, vault, tmp_path / "a.sqlite", DEFAULT_EXCLUDES)
     offered = {t.name: t for t in _call(host, None)}
-    assert sorted(offered) == ["get_note", "get_related", "ping", "search_notes"]
+    assert sorted(offered) == ["get_note", "get_refs", "get_related", "ping", "search_notes"]
     assert all(offered[n].annotations.read_only_hint for n in offered if n != "ping")
 
 

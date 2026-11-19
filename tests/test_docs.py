@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from zk import context, docs, hook, maps, recall
+from zk import context, docs, hook, lookup, maps, recall
 from zk.cli import main
 from zk.embed import update_embeddings
 from zk.index import build_index, default_db_path, health_report, open_db
@@ -256,3 +256,131 @@ def test_a_commit_of_hundreds_of_files_fits_any_command_line(git_vault):
         ["git", "-C", str(git_vault), "ls-files", "refs/many"], capture_output=True, text=True
     ).stdout.split()
     assert len(listed) == 500
+
+
+CLIENT_CS = """namespace Chat.Client
+{
+    public class ClientController
+    {
+        [Requirement("R-06")]
+        public void Logout() { }
+    }
+
+    public class RegistrationController
+    {
+        public bool ValidateRegistration(string user) { return true; }
+    }
+}
+"""
+
+
+def test_sections_link_by_shared_ids_and_flag_code_that_moved(git_vault, tmp_path, embedder):
+    root = tmp_path / "Chat"
+    (root / "docs").mkdir(parents=True)
+    (root / "Client").mkdir()
+    (root / "Client" / "ClientController.cs").write_text(CLIENT_CS, encoding="utf-8")
+    (root / "docs" / "requirements.md").write_text(
+        "# Requirements\n\n## R-06 Logout\n\nA user can log out (R-06). " + para(40, 1),
+        encoding="utf-8",
+    )
+    (root / "docs" / "tests.md").write_text(
+        "# Test plan\n\n## T-54\n\nChecks R-06: ClientController.Logout ends the session. "
+        + para(40, 2)
+        + "\n\n## T-60\n\nChecks R-02. "
+        + para(40, 3),
+        encoding="utf-8",
+    )
+    (root / "docs" / "spec.md").write_text(
+        "# Spec\n\n## Registration\n\nValidateRegistration in ClientController checks R-02. "
+        + para(40, 4),
+        encoding="utf-8",
+    )
+    (root / "docs" / "fixes.md").write_text(
+        "# Fixes\n\n## FIX-44\n\nFIX-44 makes R-06 logout close the socket. " + para(40, 5),
+        encoding="utf-8",
+    )
+    result = docs.import_docs(git_vault, root, project="chat")
+    assert result["stale"] == ["refs/chat/spec--intro.md"]
+    refs_dir = git_vault / "refs" / "chat"
+    ids_note = (refs_dir / "code--ids.md").read_text(encoding="utf-8")
+    assert "Client/ClientController.cs: ClientController.Logout" in ids_note
+    assert "code tags R-06, by file" in ids_note and ids_note.count("Logout") == 1
+
+    conn = open_db(default_db_path(git_vault))
+    build_index(conn, git_vault)
+    update_embeddings(conn, embedder)
+    found = lookup.refs(conn, "R-06", project="chat")
+    assert [s["path"] for s in found["sections"]] == [
+        "refs/chat/fixes--intro.md",
+        "refs/chat/requirements--intro.md",
+        "refs/chat/tests--intro.md",  # a short intro rides with T-54
+    ]
+    assert found["code"] == [
+        {"project": "chat", "at": "Client/ClientController.cs: ClientController.Logout"}
+    ]
+    assert found["code_total"] == 1
+    related = lookup.related(conn, "refs/chat/tests--intro.md")["related"]
+    req = next(r for r in related if r["path"] == "refs/chat/requirements--intro.md")
+    assert req["relations"][0] == "shares R-06"
+    hits = search(conn, "ValidateRegistration registration", mode="keyword", project="chat", k=3)
+    stale_hit = next(h for h in hits if h.path == "refs/chat/spec--intro.md").to_dict()
+    assert stale_hit["stale"] == [
+        "ValidateRegistration is declared in RegistrationController, not ClientController"
+    ]
+    assert all("stale" not in h.to_dict() for h in hits if h.path != "refs/chat/spec--intro.md")
+    assert "Ids its docs name most: R-06 (3 sections)." in recall.brief(conn, root)
+
+    spec = root / "docs" / "spec.md"  # the doc is fixed: the flag goes on the next sync
+    spec.write_text(
+        spec.read_text(encoding="utf-8").replace(
+            "in ClientController", "in RegistrationController"
+        ),
+        encoding="utf-8",
+    )
+    again = docs.import_docs(git_vault, root)
+    assert again["stale"] == [] and "refs/chat/spec--intro.md" in again["updated"]
+    assert docs.stale(root) is False
+    (root / "Client" / "ClientController.cs").write_text(CLIENT_CS + "\n", encoding="utf-8")
+    assert docs.stale(root)  # a code change re-syncs, so flags follow the code
+
+
+def test_no_code_leaves_the_source_unread(git_vault, tmp_path):
+    root = tmp_path / "Chat"
+    (root / "docs").mkdir(parents=True)
+    (root / "Client.cs").write_text(CLIENT_CS, encoding="utf-8")
+    (root / "docs" / "spec.md").write_text(
+        "# Spec\n\nValidateRegistration in ClientController checks R-02. " + para(40, 4),
+        encoding="utf-8",
+    )
+    result = docs.import_docs(git_vault, root, project="chat", code=False)
+    assert result["stale"] == [] and result["code_files"] == 0
+    assert not (git_vault / "refs" / "chat" / "code--ids.md").exists()
+    front = (git_vault / "refs" / "chat" / "spec--intro.md").read_text(encoding="utf-8")
+    assert "stale:" not in front and "refs:" in front  # ids still link sections
+    assert docs.import_docs(git_vault, root)["code_files"] == 0  # the choice is remembered
+
+
+def test_pdf_sections_written_with_windows_line_ends_still_update(git_vault, tmp_path, monkeypatch):
+    root = tmp_path / "Chat"
+    root.mkdir()
+    (root / "spec.pdf").write_bytes(b"%PDF")
+    text = {"now": f"Spec\r\n\r\n{para(40, 1)}\r\nMore."}
+    monkeypatch.setattr(docs, "_read_doc", lambda path, pdftotext: text["now"])
+    monkeypatch.setattr(docs, "read_doc", lambda path, pdftotext: text["now"])  # as before
+    docs.import_docs(git_vault, root, project="chat", pdftotext="pdftotext")
+    (note,) = [
+        n for n in (git_vault / "refs" / "chat").glob("spec--*.md") if b"More." in n.read_bytes()
+    ]
+    assert b"\r\n" in note.read_bytes()  # what the old import wrote
+    monkeypatch.undo()
+    monkeypatch.setattr(docs, "_read_doc", lambda path, pdftotext: text["now"])
+    rel = note.relative_to(git_vault).as_posix()
+    # git checks the note out with \n, so its stored hash (of the \r\n body) never matches
+    note.write_bytes(note.read_bytes().replace(b"\r\n", b"\n"))
+    unchanged = docs.import_docs(git_vault, root, pdftotext="pdftotext")
+    assert unchanged["edited"] == [] and unchanged["updated"] == [rel]  # rewritten, rehashed
+    assert docs.edited_by_hand(note.read_text(encoding="utf-8")) is False
+    text["now"] = text["now"].replace("More.", "Changed.")
+    again = docs.import_docs(git_vault, root, pdftotext="pdftotext")
+    assert again["edited"] == [] and again["updated"] == [rel]
+    assert "Changed." in note.read_text(encoding="utf-8")

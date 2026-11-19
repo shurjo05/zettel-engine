@@ -24,7 +24,8 @@ rebuildable index stored outside the vault.
 | M11 | Context efficiency, answer quality with citations (`zk ask`), threshold re-checks (`zk calibrate`) | done |
 | M12 | Notes reach Claude without being asked: map notes, a session brief, a search nudge, notes for failed commands and matching prompts, reading past projects (`zk learn`), a weekly review | done |
 | M13 | Vector search inside SQLite with sqlite-vec, NumPy as the fallback | done |
-| M14 | A project's docs in the vault, one note per section (`zk docs`), and reads of long docs pointed at the section that answers | in progress |
+| M14 | A project's docs in the vault, one note per section (`zk docs`), and reads of long docs pointed at the section that answers | done |
+| M15 | Doc sections linked by the ids they share (`get_refs`), and flagged when they name code that has moved | in progress |
 
 ## Setup
 
@@ -88,13 +89,14 @@ scores because BM25 scores and cosine similarities are on different scales.
 ### MCP server
 
 `zk serve` lets Claude Code and Codex search the vault while you work. It runs over stdio (the client
-starts it; no network port) and offers three read-only tools:
+starts it; no network port) and offers these read-only tools:
 
 | Tool | Returns |
 | --- | --- |
 | `search_notes(query, k, type, tag, mode)` | ranked hits with summary (and a snippet when keyword search matched), no bodies |
 | `get_note(note)` | one note in full, with the notes it links to and from |
-| `get_related(note, k)` | linked, backlinking and same-tag notes, with summaries |
+| `get_related(note, k)` | linked, backlinking and same-tag notes (and doc sections naming the same ids), with summaries |
+| `get_refs(ref, project, k)` | every doc section naming an id like `R-06`, and where the code tags it |
 
 A note can be named by id, file name, vault path or title. Each call refreshes the index first, so
 edits made in Obsidian are visible on the next call. `zk show` prints what `get_note` returns.
@@ -327,6 +329,15 @@ uv run zk docs C:\path\to\vault C:\path\to\project --skip "docs/uml/*.pdf" --ski
   ahead. `ZK_READ_REDIRECT=0` turns this off. Run `zk hooks install` again to add the hook.
 - `zk eval --context` with questions whose answers are doc sections also reports what reading
   the whole doc file costs.
+- **Links through ids**: each section lists the ids it names (`R-06`, `UC-3`, `FIX-44`, `T-54`)
+  and the code's class names it uses. `get_related` on a section puts the sections that share an
+  id first, and `get_refs("R-06")` lists every section naming it and where the code tags it (an
+  attribute like `[Requirement("R-06")]` or an id in a doc comment). The session brief names the
+  project's five most-named ids.
+- **May be stale**: a section that puts a method in a class or file that no longer declares it
+  (while another does), or names a source file that is gone, is flagged, and search hits and
+  `get_refs` say why. Only names are checked, not behaviour. A code change re-syncs the docs at the
+  next session start, so the flags follow the code. `--no-code` leaves the source files unread.
 
 ### Importing a legacy vault
 

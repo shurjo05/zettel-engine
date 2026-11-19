@@ -44,6 +44,7 @@ PROMPT_HITS = 3
 PROMPT_MATCH = 3  # words a note must share with a prompt (lower: more pointers, more noise)
 PROMPT_CHARS = 1200  # about 300 tokens at most per prompt, and usually nothing
 MAX_PROMPT_WORDS = 16
+MAX_HUBS = 5  # most-named ids listed for the project a session is in
 MAX_PROJECT_DOCS = 8  # docs listed in the brief for the project a session is in
 REDIRECT_TOKENS = 1500  # a doc this long is read through its sections first
 STATE_DAYS = 7  # per-session records older than this are cleared at session start
@@ -237,6 +238,14 @@ def brief(
             )
         if len(current_docs) > MAX_PROJECT_DOCS:
             lines.append(f"(and {len(current_docs) - MAX_PROJECT_DOCS} more docs)")
+        from zk.lookup import hubs
+
+        if top := hubs(conn, str(project), MAX_HUBS):
+            lines.append(
+                "Ids its docs name most: "
+                + ", ".join(f"{ref} ({n} sections)" for ref, n in top)
+                + '. get_refs("<id>") lists every section and code spot for one id.'
+            )
     if here:
         name, project, body = here
         entries = _notes_section(body)

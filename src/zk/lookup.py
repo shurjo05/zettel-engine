@@ -13,6 +13,10 @@ import sqlite3
 from zk.search import search
 
 MAX_BODY_CHARS = 20_000
+# An id named in more than this share of a project's sections (or a class used all over)
+# links nothing: it is the project's subject, not a thread to follow.
+MAX_REF_SHARE = 0.25
+MIN_REF_LIMIT = 8
 
 
 class NoteNotFound(LookupError):
@@ -140,6 +144,11 @@ def related(conn: sqlite3.Connection, name: str, k: int = 10) -> dict:
     ):
         add(r[0], "linked from")
 
+    front = json.loads(row["frontmatter"] or "{}")
+    if row["type"] == "reference" and front.get("refs"):
+        for other, shared in _sharing_refs(conn, path, front):
+            add(other, "shares " + ", ".join(shared))
+
     tags = {t.lower() for t in json.loads(row["tags"])}
     if tags:
         shared: list[tuple[int, str, list[str]]] = []
@@ -155,3 +164,94 @@ def related(conn: sqlite3.Connection, name: str, k: int = 10) -> dict:
         n = conn.execute("SELECT * FROM notes WHERE path = ?", (other,)).fetchone()
         neighbours.append({**_brief(n), "summary": n["summary"], "relations": relations})
     return {**_brief(row), "related": neighbours, "total": len(found)}
+
+
+def _ref_rows(
+    conn: sqlite3.Connection, project: str | None, code: bool = False
+) -> list[tuple[str, str]]:
+    """(path, ref) for every doc section's refs, in one project if given. `code` adds the
+    project's code--ids note, which isn't a section and so isn't counted as one."""
+    sql = (
+        "SELECT n.path, j.value FROM notes n, json_each(n.frontmatter, '$.refs') j "
+        "WHERE n.type = 'reference'"
+    )
+    if not code:
+        sql += " AND json_extract(n.frontmatter, '$.code_ids') IS NULL"
+    params: list = []
+    if project:
+        sql += " AND json_extract(n.frontmatter, '$.project') = ?"
+        params.append(project)
+    return [(r[0], r[1]) for r in conn.execute(sql, params)]
+
+
+def _sharing_refs(conn: sqlite3.Connection, path: str, front: dict) -> list[tuple[str, list]]:
+    """Sections of the same project that name the same ids, rarest shared id first."""
+    rows = _ref_rows(conn, front.get("project"))
+    by_ref: dict[str, set[str]] = {}
+    for p, ref in rows:
+        by_ref.setdefault(ref, set()).add(p)
+    sections = len({p for p, _ in rows})
+    limit = max(MIN_REF_LIMIT, int(sections * MAX_REF_SHARE))
+    mine = [r for r in front["refs"] if 1 < len(by_ref.get(r, ())) <= limit]
+    shared: dict[str, list[str]] = {}
+    for ref in sorted(mine, key=lambda r: (len(by_ref[r]), r)):
+        for other in sorted(by_ref[ref] - {path}):
+            shared.setdefault(other, []).append(ref)
+    rarity = {r: len(by_ref[r]) for r in mine}
+    return sorted(
+        shared.items(), key=lambda kv: (min(rarity[r] for r in kv[1]), -len(kv[1]), kv[0])
+    )
+
+
+def refs(
+    conn: sqlite3.Connection, ref: str, project: str | None = None, k: int = 30, code_k: int = 10
+) -> dict:
+    """Every doc section that names `ref` (an id like R-06, or a class name), grouped by
+    doc, and where the code tags it. Sections whose code names may be out of date carry
+    `stale`."""
+    ref = ref.strip()
+    paths = sorted({p for p, r in _ref_rows(conn, project, code=True) if r in (ref, ref.upper())})
+    sections, code = [], []
+    for p in paths:
+        row = conn.execute("SELECT * FROM notes WHERE path = ?", (p,)).fetchone()
+        front = json.loads(row["frontmatter"] or "{}")
+        if front.get("code_ids") is not None:
+            for spot in front["code_ids"].get(ref, front["code_ids"].get(ref.upper(), [])):
+                code.append({"project": front.get("project"), "at": spot})
+            continue
+        entry = {
+            "path": p,
+            "title": row["title"],
+            "doc": front.get("doc"),
+            "project": front.get("project"),
+        }
+        if front.get("stale"):
+            entry["stale"] = front["stale"]
+        sections.append(entry)
+    sections.sort(key=lambda e: (str(e["doc"]), e["path"]))
+    return {
+        "ref": ref,
+        "sections": sections[: max(k, 0)],
+        "total": len(sections),
+        "code": code[: max(code_k, 0)],  # the spots naming fewest other ids first
+        "code_total": len(code),
+    }
+
+
+def hubs(conn: sqlite3.Connection, project: str, n: int = 5) -> list[tuple[str, int]]:
+    """A project's most-named ids: (id, sections naming it), most first. Class names and
+    ids named almost everywhere are left out."""
+    from zk.crossref import ids_in
+
+    rows = _ref_rows(conn, project)
+    by_ref: dict[str, set[str]] = {}
+    for p, ref in rows:
+        if ids_in(ref) == [ref]:
+            by_ref.setdefault(ref, set()).add(p)
+    sections = len({p for p, _ in rows})
+    limit = max(MIN_REF_LIMIT, int(sections * MAX_REF_SHARE))
+    ranked = sorted(
+        ((r, len(ps)) for r, ps in by_ref.items() if 2 < len(ps) <= limit),
+        key=lambda x: (-x[1], x[0]),
+    )
+    return ranked[:n]
