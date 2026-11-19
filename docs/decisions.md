@@ -719,11 +719,11 @@ the start was a tie. Shurjo chose to build the ideas that target docs into zk.
   match again) are rewritten when their text is what zk would write now.
 - **Measured on the PC (20 headless Sonnet runs, 5 questions per project, one run each).**
 
-  | | files only | zk with M15 | right of 5 (files, zk) |
-  |---|---|---|---|
-  | chat501 | $0.79 | $0.89 (+13%) | 4, 4 |
-  | FinancialAIAssistant | $0.75 | $0.71 (-8%) | 4, 5 |
-  | total | $1.54 | $1.60 (+4%) | |
+  | | zk with M15 against files only | fully right, of 5 per arm |
+  |---|---|---|
+  | chat501 | +13% cost | 4 in each arm |
+  | FinancialAIAssistant | -8% cost | 5 and 4 |
+  | total | $1.60 against $1.54 (+4%) | the rest partly right |
 
   With one run per question, both differences are within noise: M15 is not a token win. It is
   a correctness one. "Which tests and fixes cover R-06?" was answered from the vault with no
